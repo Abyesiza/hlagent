@@ -36,6 +36,18 @@ export type ChatMessage = {
   at: number;
 };
 
+export type FileChange = {
+  file: string;
+  action: string;
+  reason: string;
+  old_code: string;
+  new_code: string;
+  ast_ok: boolean;
+  committed: boolean;
+  commit_hash: string | null;
+  error: string | null;
+};
+
 export type ImproveRequest = {
   instruction: string;
   target_file?: string;
@@ -52,6 +64,7 @@ export type ImproveResult = {
   commit_hash: string | null;
   error: string | null;
   timestamp: string;
+  file_changes: FileChange[];
 };
 
 export type ImprovementHistory = {

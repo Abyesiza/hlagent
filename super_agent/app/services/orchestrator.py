@@ -388,105 +388,209 @@ class SuperAgentOrchestrator:
             fh.write(result.model_dump_json() + "\n")
         return result
 
+    # ── two-phase self-improvement (localize → implement) ────────────────────
+
+    def _localize_files(self, instruction: str, snapshot: str) -> list[dict[str, str]]:
+        """
+        Phase 1 (localize): ask Gemini which files to create/modify.
+        Returns a list like:
+          [{"file": "super_agent/app/api/routes.py", "action": "modify", "reason": "..."}]
+        Uses the SICA/SWE-Adept pattern: localization agent → resolution agent.
+        """
+        import json as _json
+        prompt = (
+            "You are a code localization agent for a FastAPI + Next.js monorepo.\n\n"
+            f"Codebase overview:\n{snapshot}\n\n"
+            f"User instruction: {instruction}\n\n"
+            "Identify ALL files that must be CREATED or MODIFIED to fully implement this.\n"
+            "Output ONLY a JSON array — no markdown fences, no explanation:\n"
+            "[\n"
+            '  {"file": "super_agent/app/api/routes.py", "action": "modify", "reason": "add new endpoint"}\n'
+            "]\n\n"
+            "Rules:\n"
+            "- 1–4 files maximum\n"
+            "- Exact repo-relative paths (e.g. super_agent/app/services/orchestrator.py)\n"
+            "- Dependency order: list files imported by others LAST\n"
+            "- Only files directly needed — no unrelated tests or docs"
+        )
+        raw = self._gemini.generate_text(prompt)
+        # strip markdown fences if the model adds them
+        cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw).strip()
+        m = re.search(r"\[[\s\S]*?\]", cleaned)
+        if not m:
+            return []
+        try:
+            candidates = _json.loads(m.group(0))
+            return [c for c in candidates if isinstance(c, dict) and c.get("file")]
+        except Exception:
+            return []
+
+    def _generate_file_code(
+        self,
+        file_path: str,
+        instruction: str,
+        all_targets: list[dict[str, str]],
+        snapshot: str,
+        existing_code: str,
+    ) -> str | None:
+        """
+        Phase 2 (implement): generate the complete new content of a single file.
+        Returns the raw code string, or None if generation failed.
+        """
+        is_python = file_path.endswith(".py")
+        lang = "python" if is_python else ("tsx" if file_path.endswith(".tsx") else "typescript")
+        plan_summary = "\n".join(
+            f"- {t['file']}: {t.get('reason', '')}" for t in all_targets
+        )
+        action_note = "CREATING (new file)" if not existing_code else "MODIFYING (existing file)"
+        prompt = (
+            f"You are implementing a change across multiple files in the super-agent project.\n\n"
+            f"Architecture overview:\n{snapshot}\n\n"
+            f"All files being changed in this operation:\n{plan_summary}\n\n"
+            f"Now generate the content for: `{file_path}` ({action_note})\n"
+            f"User instruction: {instruction}\n\n"
+            + (f"Current content:\n```{lang}\n{existing_code}\n```\n\n" if existing_code else "")
+            + f"Generate the COMPLETE new content as a single ```{lang} ... ``` block.\n"
+            "Rules:\n"
+            "- Output ONLY one code block — the full file content\n"
+            "- Preserve ALL existing functionality unless told to remove it\n"
+            "- Match the exact code style of the existing file\n"
+            "- Do NOT truncate with '# ... rest unchanged' or similar placeholders\n"
+            "- Do NOT add explanatory comments about what you changed"
+        )
+        raw = self._gemini.generate_text(prompt, model=self._settings.gemini_model_pro)
+        pattern = rf"```(?:{lang}|python|typescript|tsx|ts)?\s*([\s\S]*?)```"
+        m = re.search(pattern, raw)
+        return m.group(1).strip() if m else None
+
     def improve_self(self, instruction: str, target_file: str | None = None) -> "ImproveResult":
         """
-        Self-improvement pipeline:
-        1. Ask Gemini to identify target file (if not given)
-        2. Read current file content
-        3. Gemini generates improved version
-        4. AST check → write → git commit → refresh CODEBASE.md
-        5. Log to data/improvements.jsonl
+        Two-phase self-improvement pipeline (SWE-Adept / SICA pattern):
+          Phase 1 — Localize: identify ALL files to change
+          Phase 2 — Implement: generate + write + commit each file
+        Returns an ImproveResult whose file_changes list carries every modified file.
         """
-        import json
+        import json as _json
         from datetime import UTC, datetime
         from pathlib import Path
 
-        from super_agent.app.domain.chat_schemas import ImproveResult
+        from super_agent.app.domain.chat_schemas import FileChange, ImproveResult
         from super_agent.app.infrastructure.ast_liveness import parse_src_ok
         from super_agent.app.services.codebase_scanner import refresh_codebase_md
-        from super_agent.app.services.sica_loop import sica_step
+        from super_agent.app.services.sica_loop import sica_step, write_non_python_file
         from super_agent.app.services.workspace_context import load_codebase_snapshot
 
         repo_root = Path(__file__).resolve().parents[3]
         ts = datetime.now(UTC).isoformat()
 
-        _ALLOWED_PREFIXES = ("super_agent/", "tests/")
+        _ALLOWED_PREFIXES = ("super_agent/", "tests/", "nextjstester/")
 
-        if not target_file:
-            snapshot = load_codebase_snapshot(self._settings.data_dir, max_chars=3000)
-            plan_prompt = (
-                "You are helping improve the super_agent FastAPI codebase.\n"
-                f"Codebase summary (excerpt):\n{snapshot}\n\n"
-                f"User instruction: {instruction}\n\n"
-                "Identify the single best Python file to edit. "
-                "Reply with ONLY the relative path from the repo root, "
-                "e.g.: super_agent/app/api/routes.py\n"
-                "No explanation, no markdown, just the path."
-            )
-            raw_path = self._gemini.generate_text(plan_prompt).strip()
-            target_file = raw_path.splitlines()[0].strip().strip("`").strip()
+        snapshot = load_codebase_snapshot(self._settings.data_dir, max_chars=3500)
 
-        if not any(target_file.startswith(p) for p in _ALLOWED_PREFIXES):
+        # ── Phase 1: localize ──────────────────────────────────────────────────
+        if target_file:
+            targets = [{"file": target_file.strip(), "action": "modify", "reason": instruction}]
+        else:
+            targets = self._localize_files(instruction, snapshot)
+
+        if not targets:
             return ImproveResult(
-                ok=False, target_file=target_file, instruction=instruction,
-                error=f"Safety: only files under {_ALLOWED_PREFIXES} may be modified.", timestamp=ts,
+                ok=False, target_file="unknown", instruction=instruction,
+                error="Localization failed: Gemini could not identify which files to change. "
+                      "Try being more specific (e.g. 'add X to routes.py').",
+                timestamp=ts,
             )
 
-        target_path = repo_root / target_file
-        if not target_path.exists():
+        # Safety check — only allow known paths
+        blocked = [t["file"] for t in targets if not any(t["file"].startswith(p) for p in _ALLOWED_PREFIXES)]
+        if blocked:
             return ImproveResult(
-                ok=False, target_file=target_file, instruction=instruction,
-                error=f"File not found: {target_file}", timestamp=ts,
+                ok=False, target_file=blocked[0], instruction=instruction,
+                error=f"Safety: blocked modification to {blocked}. Only {_ALLOWED_PREFIXES} are allowed.",
+                timestamp=ts,
             )
 
-        old_code = target_path.read_text(encoding="utf-8")
-        snapshot = load_codebase_snapshot(self._settings.data_dir, max_chars=2000)
-        improve_prompt = (
-            "You are improving a Python module in the super_agent project.\n"
-            f"Architecture (excerpt):\n{snapshot}\n\n"
-            f"Current content of `{target_file}`:\n"
-            f"```python\n{old_code}\n```\n\n"
-            f"User instruction: {instruction}\n\n"
-            "Generate the COMPLETE improved version as a single Python code block.\n"
-            "Rules:\n"
-            "- Output ONLY one ```python ... ``` block containing the full file\n"
-            "- Preserve all existing functionality unless explicitly told otherwise\n"
-            "- Match the existing code style exactly\n"
-            "- Do not truncate or use placeholders like '# ... rest of file'"
-        )
-        raw = self._gemini.generate_text(improve_prompt, model=self._settings.gemini_model_pro)
+        # ── Phase 2: implement ─────────────────────────────────────────────────
+        file_changes: list[FileChange] = []
+        primary: FileChange | None = None
 
-        code_m = re.search(r"```(?:python)?\s*([\s\S]*?)```", raw)
-        if not code_m:
-            return ImproveResult(
-                ok=False, target_file=target_file, instruction=instruction,
-                old_code=old_code, error="Gemini did not return a code block.", timestamp=ts,
+        for target in targets:
+            fp = target["file"]
+            target_path = repo_root / fp
+            is_python = fp.endswith(".py")
+
+            existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+            new_code = self._generate_file_code(fp, instruction, targets, snapshot, existing)
+
+            if not new_code:
+                fc = FileChange(
+                    file=fp, action=target.get("action", "modify"),
+                    reason=target.get("reason", ""), old_code=existing,
+                    error="Code generation failed (no code block returned)",
+                )
+                file_changes.append(fc)
+                continue
+
+            if is_python:
+                ast_ok, ast_err = parse_src_ok(new_code)
+                if not ast_ok:
+                    fc = FileChange(
+                        file=fp, action=target.get("action", "modify"),
+                        reason=target.get("reason", ""), old_code=existing,
+                        new_code=new_code, ast_ok=False,
+                        error=f"AST check failed: {ast_err}",
+                    )
+                    file_changes.append(fc)
+                    continue
+                step = sica_step(repo_root, target_path, new_code + "\n", f"improve: {instruction[:60]}")
+            else:
+                # For TypeScript/TSX/Markdown — basic sanity, then write+commit
+                if len(new_code) < 50:
+                    fc = FileChange(
+                        file=fp, action=target.get("action", "modify"),
+                        reason=target.get("reason", ""), old_code=existing,
+                        new_code=new_code,
+                        error="Generated content too short, skipped.",
+                    )
+                    file_changes.append(fc)
+                    continue
+                step = write_non_python_file(repo_root, target_path, new_code + "\n", f"improve: {instruction[:60]}")
+
+            fc = FileChange(
+                file=fp,
+                action=target.get("action", "modify"),
+                reason=target.get("reason", ""),
+                old_code=existing,
+                new_code=new_code,
+                ast_ok=is_python,
+                committed=bool(step.get("committed", False)),
+                commit_hash=step.get("stable_hash"),  # type: ignore[arg-type]
+                error=None if step.get("ok", True) else str(step.get("error", "")),
             )
+            file_changes.append(fc)
+            if primary is None and fc.error is None:
+                primary = fc
 
-        new_code = code_m.group(1).strip()
-        ast_ok, ast_err = parse_src_ok(new_code)
-        if not ast_ok:
-            return ImproveResult(
-                ok=False, target_file=target_file, instruction=instruction,
-                old_code=old_code, new_code=new_code, ast_ok=False,
-                error=f"AST check failed: {ast_err}", timestamp=ts,
-            )
-
-        step = sica_step(repo_root, target_path, new_code + "\n", f"improve: {instruction[:80]}")
         refresh_codebase_md(self._settings.data_dir)
 
-        commit_hash: str | None = step.get("stable_hash") if step.get("committed") else None  # type: ignore[assignment]
+        # Primary is the first successfully changed file
+        if primary is None:
+            primary = file_changes[0] if file_changes else FileChange(
+                file="unknown", error="No files were successfully changed."
+            )
+
         result = ImproveResult(
-            ok=bool(step.get("ok", True)),
-            target_file=target_file,
+            ok=primary.error is None,
+            target_file=primary.file,
             instruction=instruction,
-            old_code=old_code,
-            new_code=new_code,
-            ast_ok=True,
-            committed=bool(step.get("committed", False)),
-            commit_hash=commit_hash,
-            error=None if step.get("ok", True) else str(step.get("error", "")),
+            old_code=primary.old_code,
+            new_code=primary.new_code,
+            ast_ok=primary.ast_ok,
+            committed=primary.committed,
+            commit_hash=primary.commit_hash,
+            error=primary.error,
             timestamp=ts,
+            file_changes=file_changes,
         )
 
         history_file = self._settings.data_dir / "improvements.jsonl"

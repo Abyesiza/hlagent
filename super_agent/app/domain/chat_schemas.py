@@ -27,6 +27,19 @@ class ImproveRequest(BaseModel):
     target_file: str | None = None
 
 
+class FileChange(BaseModel):
+    """A single file modified or created during an improvement."""
+    file: str
+    action: str = "modify"   # "modify" | "create"
+    reason: str = ""
+    old_code: str = ""
+    new_code: str = ""
+    ast_ok: bool = False
+    committed: bool = False
+    commit_hash: str | None = None
+    error: str | None = None
+
+
 class ImproveResult(BaseModel):
     ok: bool
     target_file: str
@@ -38,6 +51,8 @@ class ImproveResult(BaseModel):
     commit_hash: str | None = None
     error: str | None = None
     timestamp: str = ""
+    # multi-file support: additional files changed in the same operation
+    file_changes: list[FileChange] = Field(default_factory=list)
 
 
 class FullStackImproveResult(BaseModel):

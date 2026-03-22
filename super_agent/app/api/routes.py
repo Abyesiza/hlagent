@@ -146,9 +146,7 @@ class SandboxRunRequest(BaseModel):
 
 @router.post("/sandbox/run")
 def sandbox_run(body: SandboxRunRequest, c: ContainerDep) -> dict[str, object]:
-    """
-    Execute Python code in the sandbox (subprocess by default, Docker if enabled).
-    """
+    """Execute Python code in the subprocess sandbox."""
     from super_agent.app.infrastructure.sandbox_docker import run_sandbox
     result = run_sandbox(c.settings, body.code, body.timeout)
     return {

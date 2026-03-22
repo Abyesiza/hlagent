@@ -168,6 +168,7 @@ function MarkdownMessage({ text }: { text: string }) {
 
 function InlineImproveCard({ r }: { r: ImproveResult }) {
   const [open, setOpen] = useState(false);
+  const allChanges = r.file_changes?.length ? r.file_changes : [{ file: r.target_file, new_code: r.new_code, error: r.error, committed: r.committed, commit_hash: r.commit_hash, ast_ok: r.ast_ok }];
   return (
     <div className={`mt-3 rounded-lg border text-xs ${
       r.ok
@@ -178,34 +179,40 @@ function InlineImproveCard({ r }: { r: ImproveResult }) {
         <span className={`font-bold ${r.ok ? "text-emerald-600" : "text-red-500"}`}>
           {r.ok ? "✓ Code changed" : "✗ Improve failed"}
         </span>
-        <code className="rounded bg-white/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-          {r.target_file}
-        </code>
-        {r.committed && (
-          <span className="rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] text-blue-600 dark:bg-blue-900 dark:text-blue-300">
-            {r.commit_hash?.slice(0, 8) ?? "committed"}
-          </span>
-        )}
-        {r.ast_ok && (
-          <span className="text-[10px] text-zinc-400">AST ✓</span>
-        )}
-        <button
-          type="button"
-          onClick={() => setOpen(o => !o)}
-          className="ml-auto text-[10px] text-zinc-400 underline"
-        >
-          {open ? "hide diff" : "show diff"}
+        <span className="rounded bg-white/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:bg-zinc-900 dark:text-zinc-300">
+          {allChanges.length} file{allChanges.length !== 1 ? "s" : ""}
+        </span>
+        <button type="button" onClick={() => setOpen(o => !o)} className="ml-auto text-[10px] text-zinc-400 underline">
+          {open ? "hide" : "show diff"}
         </button>
       </div>
       {r.error && (
-        <p className="border-t border-red-200 px-3 py-1.5 text-red-600 dark:border-red-800 dark:text-red-300">
-          {r.error}
-        </p>
+        <p className="border-t border-red-200 px-3 py-1.5 text-red-600 dark:border-red-800 dark:text-red-300">{r.error}</p>
       )}
-      {open && r.new_code && (
-        <pre className="max-h-64 overflow-auto border-t border-emerald-200 bg-zinc-950 px-4 py-3 font-mono text-[10px] leading-relaxed text-emerald-300 dark:border-emerald-800">
-          {r.new_code}
-        </pre>
+      {open && (
+        <div className="border-t border-emerald-200 dark:border-emerald-800">
+          {allChanges.map((fc, i) => (
+            <div key={i} className="border-b border-emerald-100 px-3 py-2 last:border-0 dark:border-emerald-900">
+              <div className="mb-1 flex items-center gap-2">
+                <span className={fc.error ? "text-red-500" : "text-emerald-600"}>
+                  {fc.error ? "✗" : "✓"}
+                </span>
+                <code className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{fc.file}</code>
+                {fc.committed && (
+                  <span className="rounded bg-blue-100 px-1 font-mono text-[9px] text-blue-600 dark:bg-blue-900 dark:text-blue-300">
+                    {(fc.commit_hash as string | null)?.slice(0, 7)}
+                  </span>
+                )}
+              </div>
+              {fc.error && <p className="text-[10px] text-red-500">{fc.error}</p>}
+              {fc.new_code && !fc.error && (
+                <pre className="mt-1 max-h-48 overflow-auto rounded bg-zinc-950 px-3 py-2 font-mono text-[9px] leading-relaxed text-emerald-300">
+                  {(fc.new_code as string).slice(0, 1500)}{(fc.new_code as string).length > 1500 ? "\n…" : ""}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -846,8 +853,9 @@ export default function AgentTester() {
                 <div>
                   <h3 className="font-semibold text-zinc-800 dark:text-zinc-100">Direct code improvement</h3>
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    Describe the change. The agent identifies the file, generates the improved version, runs
-                    an AST check, writes it, and commits. You can also trigger this from Chat with Auto-improve ON.
+                    Describe what you want. The agent identifies ALL affected files automatically,
+                    generates each one, runs an AST check, writes and commits them.
+                    You can also trigger this from Chat with Auto-improve ON.
                   </p>
                 </div>
               </div>
@@ -856,22 +864,11 @@ export default function AgentTester() {
                 Instruction
               </label>
               <textarea
-                className="mb-3 w-full resize-none rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-violet-400 focus:outline-none focus:ring-1 focus:ring-violet-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                className="mb-3 w-full resize-none rounded-xl border border-zinc-200 bg-zinc-900 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-zinc-700"
                 rows={4}
                 value={instruction}
                 onChange={e => setInstruction(e.target.value)}
-                placeholder={"Add rate limiting to the /chat endpoint\nImprove the HDC memory to persist across restarts\nAdd a /api/v1/sessions endpoint listing saved sessions"}
-              />
-
-              <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                Target file <span className="font-normal text-zinc-400">(leave blank — auto-detected)</span>
-              </label>
-              <input
-                className="mb-4 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 font-mono text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-violet-400 focus:outline-none focus:ring-1 focus:ring-violet-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-                value={targetFile}
-                onChange={e => setTargetFile(e.target.value)}
-                placeholder="super_agent/app/api/routes.py"
-                spellCheck={false}
+                placeholder={"Add a /api/v1/sessions list endpoint\nImprove the HDC memory retrieval scoring\nAdd rate limiting to all chat endpoints"}
               />
 
               {/* full-stack toggle */}
@@ -917,7 +914,7 @@ export default function AgentTester() {
             </div>
 
             {improveResult && (
-              <div className={`rounded-xl border p-5 ${
+              <div className={`rounded-xl border p-4 ${
                 improveResult.ok
                   ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30"
                   : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
@@ -926,34 +923,50 @@ export default function AgentTester() {
                   <span className={`text-sm font-bold ${improveResult.ok ? "text-emerald-600" : "text-red-500"}`}>
                     {improveResult.ok ? "✓ Applied" : "✗ Failed"}
                   </span>
-                  <code className="rounded bg-white px-2 py-0.5 text-[11px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-                    {improveResult.target_file}
-                  </code>
-                  {improveResult.committed && (
-                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">
-                      commit {improveResult.commit_hash?.slice(0, 8) ?? ""}
-                    </span>
-                  )}
-                  {improveResult.ast_ok && (
-                    <span className="text-[10px] text-zinc-400">AST ✓</span>
-                  )}
+                  <span className="rounded bg-white/70 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    {(improveResult.file_changes?.length || 1)} file{(improveResult.file_changes?.length || 1) !== 1 ? "s" : ""} touched
+                  </span>
                   <span className="ml-auto text-[10px] text-zinc-400">{fmtTs(improveResult.timestamp)}</span>
                 </div>
-                {improveResult.error && (
+                {improveResult.error && !improveResult.file_changes?.length && (
                   <p className="mb-3 rounded-lg bg-red-100 px-3 py-2 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">
                     {improveResult.error}
                   </p>
                 )}
-                {improveResult.new_code && (
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-700">
-                      Show new code ({improveResult.new_code.split("\n").length} lines)
-                    </summary>
-                    <pre className="mt-2 max-h-80 overflow-auto rounded-lg bg-zinc-950 px-4 py-3 font-mono text-[10px] text-emerald-300">
-                      {improveResult.new_code}
-                    </pre>
-                  </details>
-                )}
+                {(improveResult.file_changes?.length
+                  ? improveResult.file_changes
+                  : [{ file: improveResult.target_file, new_code: improveResult.new_code, error: improveResult.error, committed: improveResult.committed, commit_hash: improveResult.commit_hash, reason: "", ast_ok: improveResult.ast_ok }]
+                ).map((fc, i) => (
+                  <div key={i} className={`mb-2 rounded-lg border p-3 ${
+                    fc.error
+                      ? "border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/20"
+                      : "border-emerald-100 bg-white dark:border-emerald-900 dark:bg-zinc-900"
+                  }`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={fc.error ? "text-red-500" : "text-emerald-500"}>{fc.error ? "✗" : "✓"}</span>
+                      <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                        {fc.file}
+                      </code>
+                      {fc.committed && (
+                        <span className="rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">
+                          {(fc.commit_hash as string | null)?.slice(0, 8)}
+                        </span>
+                      )}
+                      {fc.reason && <span className="text-[10px] text-zinc-400 italic">{fc.reason}</span>}
+                    </div>
+                    {fc.error && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{fc.error}</p>}
+                    {fc.new_code && !fc.error && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[11px] text-zinc-400 hover:text-zinc-600">
+                          Show code ({(fc.new_code as string).split("\n").length} lines)
+                        </summary>
+                        <pre className="mt-1.5 max-h-56 overflow-auto rounded bg-zinc-950 px-3 py-2 font-mono text-[10px] text-emerald-300">
+                          {fc.new_code as string}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 

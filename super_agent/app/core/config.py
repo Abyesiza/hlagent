@@ -42,9 +42,6 @@ class Settings(BaseSettings):
     heartbeat_interval_seconds: int = Field(default=300)
     agent_loop_timeout_seconds: float = Field(default=3600.0)
 
-    docker_sandbox_image: str = Field(default="python:3.12-slim")
-    enable_docker_sandbox: bool = Field(default=False)
-
     cors_origins: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
     )

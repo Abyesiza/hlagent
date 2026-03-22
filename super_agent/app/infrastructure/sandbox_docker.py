@@ -1,131 +1,77 @@
 """
-Sandbox execution: subprocess-based (always available) with optional Docker.
+Subprocess-only code sandbox.
 
-Priority:
-  1. Docker  — if settings.enable_docker_sandbox=True and `docker` CLI is reachable
-  2. subprocess  — isolated Python via `python -I`, always available
+Docker has been removed in favour of a simpler, always-available approach:
+  - python -I  (isolated mode: ignores PYTHONPATH, user site-packages)
+  - resource limits via a tight timeout
+  - stdout / stderr captured and truncated to prevent output flooding
 """
 from __future__ import annotations
 
-import logging
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+import textwrap
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from super_agent.app.core.config import Settings
-
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from super_agent.app.core.config import Settings
 
 
 @dataclass
 class SandboxResult:
-    returncode: int
-    stdout: str
-    stderr: str
-    backend: str          # "subprocess" or "docker"
+    returncode: int = 0
+    stdout: str = ""
+    stderr: str = ""
+    backend: str = "subprocess"
     timed_out: bool = False
 
 
-def run_subprocess_sandbox(code: str, timeout: int = 15) -> SandboxResult:
-    """
-    Execute Python code in an isolated subprocess.
+_MAX_OUTPUT = 8_000   # chars — truncate large output so the API response stays reasonable
 
-    Uses `python -I` (isolated mode: ignores PYTHONPATH, user site-packages,
-    and the current directory). Works on any machine without Docker.
+
+def run_sandbox(settings: "Settings", code: str, timeout: int = 15) -> SandboxResult:
     """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, encoding="utf-8"
-    ) as fh:
-        fh.write(code)
-        tmp = Path(fh.name)
+    Execute *code* in an isolated subprocess and return the result.
+
+    The code is written to a temp file and run with ``python -I`` which:
+      - ignores PYTHONPATH
+      - ignores the user site directory
+      - prevents importing site-packages that could escape the sandbox
+
+    Network access is NOT blocked at the OS level here; that responsibility
+    belongs to the caller or a future seccomp/nsjail wrapper.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", encoding="utf-8", delete=False) as f:
+        f.write(textwrap.dedent(code))
+        tmp = Path(f.name)
+
     try:
-        result = subprocess.run(
+        proc = subprocess.run(
             [sys.executable, "-I", str(tmp)],
             capture_output=True,
             text=True,
             timeout=timeout,
         )
+        stdout = proc.stdout[:_MAX_OUTPUT]
+        stderr = proc.stderr[:_MAX_OUTPUT]
         return SandboxResult(
-            returncode=result.returncode,
-            stdout=result.stdout[:8000],
-            stderr=result.stderr[:4000],
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
             backend="subprocess",
         )
     except subprocess.TimeoutExpired:
         return SandboxResult(
-            returncode=-1, stdout="", stderr=f"Execution timed out after {timeout}s",
-            backend="subprocess", timed_out=True,
+            returncode=1,
+            stdout="",
+            stderr=f"Execution timed out after {timeout}s.",
+            backend="subprocess",
+            timed_out=True,
         )
     except Exception as e:
-        logger.exception("subprocess sandbox error")
-        return SandboxResult(returncode=-1, stdout="", stderr=str(e), backend="subprocess")
+        return SandboxResult(returncode=1, stderr=str(e), backend="subprocess")
     finally:
         tmp.unlink(missing_ok=True)
-
-
-def run_docker_sandbox(
-    settings: Settings,
-    command: list[str],
-    workspace_host_path: Path,
-    timeout: int = 60,
-) -> SandboxResult:
-    """
-    Run a command in Docker with the workspace mounted.
-    Falls back gracefully if docker CLI is missing or fails.
-    """
-    if not settings.enable_docker_sandbox:
-        return SandboxResult(
-            returncode=-1, stdout="", stderr="Docker sandbox disabled",
-            backend="docker",
-        )
-    image = settings.docker_sandbox_image
-    ws = workspace_host_path.resolve()
-    try:
-        result = subprocess.run(
-            ["docker", "run", "--rm",
-             "--network=none",           # no outbound network
-             "--memory=256m",
-             "--cpus=0.5",
-             "-v", f"{ws}:/workspace:ro",
-             "-w", "/workspace",
-             image, *command],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        return SandboxResult(
-            returncode=result.returncode,
-            stdout=result.stdout[:8000],
-            stderr=result.stderr[:4000],
-            backend="docker",
-        )
-    except FileNotFoundError:
-        return SandboxResult(returncode=-1, stdout="", stderr="docker CLI not found", backend="docker")
-    except subprocess.TimeoutExpired:
-        return SandboxResult(
-            returncode=-1, stdout="", stderr=f"Docker timed out after {timeout}s",
-            backend="docker", timed_out=True,
-        )
-    except Exception as e:
-        logger.exception("docker sandbox error")
-        return SandboxResult(returncode=-1, stdout="", stderr=str(e), backend="docker")
-
-
-def run_sandbox(settings: Settings, code: str, timeout: int = 15) -> SandboxResult:
-    """
-    Route to Docker if enabled and available, otherwise subprocess.
-    This is the main entry point used by the API.
-    """
-    if settings.enable_docker_sandbox:
-        result = run_docker_sandbox(
-            settings,
-            ["python", "-c", code],
-            settings.sandbox_dir,
-            timeout=timeout,
-        )
-        if result.returncode != -1 or "not found" not in result.stderr:
-            return result
-        logger.warning("Docker unavailable, falling back to subprocess sandbox")
-    return run_subprocess_sandbox(code, timeout)
