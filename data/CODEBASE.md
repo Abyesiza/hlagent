@@ -45,7 +45,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/core/__init__.py** (2 lines) — Config, security, Gemini.
 
-**super_agent/app/core/config.py** (99 lines) — Accept GEMINI_API_KEY (no SUPER_AGENT_ prefix) as the primary key.
+**super_agent/app/core/config.py** (96 lines) — Accept GEMINI_API_KEY (no SUPER_AGENT_ prefix) as the primary key.
   class Settings
   def get_settings()
 
@@ -74,9 +74,10 @@ nextjstester/       Next.js 16 frontend (local tester)
   class BlueprintSnapshot — Single source of truth for human + API: what is implemented vs still open.
   def default_blueprint()
 
-**super_agent/app/domain/chat_schemas.py** (52 lines) — Single end-to-end turn: routing + symbolic or neural output + optional memory hit.
+**super_agent/app/domain/chat_schemas.py** (67 lines) — Single end-to-end turn: routing + symbolic or neural output + optional memory hit.
   class ChatTurnResult — Single end-to-end turn: routing + symbolic or neural output + optional memory hi
   class ImproveRequest
+  class FileChange — A single file modified or created during an improvement.
   class ImproveResult
   class FullStackImproveResult — Wraps a backend + optional frontend improvement applied in one operation.
 
@@ -117,11 +118,9 @@ nextjstester/       Next.js 16 frontend (local tester)
 **super_agent/app/infrastructure/intent_router.py** (21 lines)
   def classify_intent()
 
-**super_agent/app/infrastructure/sandbox_docker.py** (132 lines) — Sandbox execution: subprocess-based (always available) with optional Docker.
+**super_agent/app/infrastructure/sandbox_docker.py** (78 lines) — Subprocess-only code sandbox.
   class SandboxResult
-  def run_subprocess_sandbox() — Execute Python code in an isolated subprocess.
-  def run_docker_sandbox() — Run a command in Docker with the workspace mounted.
-  def run_sandbox() — Route to Docker if enabled and available, otherwise subprocess.
+  def run_sandbox() — Execute *code* in an isolated subprocess and return the result.
 
 **super_agent/app/infrastructure/sympy_runner.py** (150 lines) — True when the model returned error-like prose instead of a Python code block.
   def llm_output_suspicious_for_symcode() — True when the model returned error-like prose instead of a Python code block.
@@ -148,7 +147,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 **super_agent/app/services/heartbeat.py** (36 lines)
   def attach_heartbeat()
 
-**super_agent/app/services/orchestrator.py** (613 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
+**super_agent/app/services/orchestrator.py** (717 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
   def _today_str()
   def _needs_search()
   def _is_improve_intent()
@@ -196,7 +195,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   class AppContainer
   def build_container()
 
-**super_agent/app/api/routes.py** (410 lines) — SSE endpoint: streams the agent response token-by-token.
+**super_agent/app/api/routes.py** (408 lines) — SSE endpoint: streams the agent response token-by-token.
   def get_container()
   def blueprint_status()
   def next_gaps()
@@ -208,7 +207,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   def sympy_run()
   def route_intent()
   class SandboxRunRequest
-  def sandbox_run() — Execute Python code in the sandbox (subprocess by default, Docker if enabled).
+  def sandbox_run() — Execute Python code in the subprocess sandbox.
   def memory_list()
   def codebase_snapshot()
   def codebase_refresh()
