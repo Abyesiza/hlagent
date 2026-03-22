@@ -74,8 +74,10 @@ nextjstester/       Next.js 16 frontend (local tester)
   class BlueprintSnapshot — Single source of truth for human + API: what is implemented vs still open.
   def default_blueprint()
 
-**super_agent/app/domain/chat_schemas.py** (23 lines) — Single end-to-end turn: routing + symbolic or neural output + optional memory hit.
+**super_agent/app/domain/chat_schemas.py** (41 lines) — Single end-to-end turn: routing + symbolic or neural output + optional memory hit.
   class ChatTurnResult — Single end-to-end turn: routing + symbolic or neural output + optional memory hi
+  class ImproveRequest
+  class ImproveResult
 
 **super_agent/app/domain/hdc.py** (81 lines) — Minimal Vector Symbolic Architecture in NumPy (D=10_000).
   def _seed_bytes()
@@ -96,8 +98,9 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/infrastructure/__init__.py** (2 lines) — Adapters: SymPy, Git, Docker, etc.
 
-**super_agent/app/infrastructure/ast_liveness.py** (16 lines)
+**super_agent/app/infrastructure/ast_liveness.py** (25 lines) — Validate Python source string without writing it to disk.
   def parse_ok()
+  def parse_src_ok() — Validate Python source string without writing it to disk.
 
 **super_agent/app/infrastructure/git_safe.py** (43 lines)
   def git_commit_all()
@@ -124,7 +127,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/services/__init__.py** (2 lines) — Orchestration services.
 
-**super_agent/app/services/agent_loop.py** (58 lines) — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
+**super_agent/app/services/agent_loop.py** (101 lines) — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
   class AgentJob
   class AgentLoopService — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
 
@@ -139,7 +142,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 **super_agent/app/services/heartbeat.py** (36 lines)
   def attach_heartbeat()
 
-**super_agent/app/services/orchestrator.py** (244 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
+**super_agent/app/services/orchestrator.py** (352 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
   def _today_str()
   def _needs_search()
   def _extract_python()
@@ -176,11 +179,12 @@ nextjstester/       Next.js 16 frontend (local tester)
   class AppContainer
   def build_container()
 
-**super_agent/app/api/routes.py** (116 lines)
+**super_agent/app/api/routes.py** (146 lines)
   def get_container()
   def blueprint_status()
   def next_gaps()
   class ChatRequest
+  class ImproveRequestBody
   def chat_sync()
   def start_agent()
   def get_job()
@@ -188,6 +192,8 @@ nextjstester/       Next.js 16 frontend (local tester)
   def route_intent()
   def codebase_snapshot()
   def codebase_refresh()
+  def request_improvement()
+  def improvement_history()
   def research_trigger()
   def sica_summary()
 
