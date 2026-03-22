@@ -1,4 +1,4 @@
-import type { BlueprintSnapshot, ChatTurnResult, FullStackImproveResult, ImprovementHistory, ImproveResult } from "./types";
+import type { BlueprintSnapshot, ChatTurnResult, FullStackImproveResult, ImprovementHistory, ImproveResult, BlueprintGap } from "./types";
 
 function defaultBase(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_API_URL) {
@@ -50,6 +50,16 @@ export async function fetchBlueprint(base: string): Promise<BlueprintSnapshot | 
     const r = await fetch(`${base}/api/v1/status`, { cache: "no-store" });
     if (!r.ok) return null;
     return r.json();
+  } catch { return null; }
+}
+
+export async function fetchNextGaps(
+  base: string,
+): Promise<{ version: string; gaps: BlueprintGap[] } | null> {
+  try {
+    const r = await fetch(`${base}/api/v1/gaps`, { cache: "no-store" });
+    if (!r.ok) return null;
+    return r.json() as Promise<{ version: string; gaps: BlueprintGap[] }>;
   } catch { return null; }
 }
 

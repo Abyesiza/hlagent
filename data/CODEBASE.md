@@ -74,10 +74,11 @@ nextjstester/       Next.js 16 frontend (local tester)
   class BlueprintSnapshot — Single source of truth for human + API: what is implemented vs still open.
   def default_blueprint()
 
-**super_agent/app/domain/chat_schemas.py** (41 lines) — Single end-to-end turn: routing + symbolic or neural output + optional memory hit.
+**super_agent/app/domain/chat_schemas.py** (52 lines) — Single end-to-end turn: routing + symbolic or neural output + optional memory hit.
   class ChatTurnResult — Single end-to-end turn: routing + symbolic or neural output + optional memory hi
   class ImproveRequest
   class ImproveResult
+  class FullStackImproveResult — Wraps a backend + optional frontend improvement applied in one operation.
 
 **super_agent/app/domain/hdc.py** (81 lines) — Minimal Vector Symbolic Architecture in NumPy (D=10_000).
   def _seed_bytes()
@@ -147,7 +148,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 **super_agent/app/services/heartbeat.py** (36 lines)
   def attach_heartbeat()
 
-**super_agent/app/services/orchestrator.py** (414 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
+**super_agent/app/services/orchestrator.py** (613 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
   def _today_str()
   def _needs_search()
   def _is_improve_intent()
@@ -166,12 +167,13 @@ nextjstester/       Next.js 16 frontend (local tester)
   class Session
   class SessionStore — In-memory sessions, optionally persisted to data/sessions/<id>.json.
 
-**super_agent/app/services/sica_loop.py** (175 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
+**super_agent/app/services/sica_loop.py** (201 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
   def run_pytest_benchmark() — Run the test suite under `repo/tests/` and return a score dict.
   def _save_benchmark()
   def load_benchmark_history()
   def plan_improvements() — Build a real improvement plan from live blueprint gaps and benchmark score.
   def sica_step() — Inner loop: write file → AST liveness → git commit → HDC vector → quantum pick.
+  def write_non_python_file() — Write any non-Python file and commit it.
   def run_outer_loop_summary() — Run benchmark → plan improvements → save history → return JSON summary.
 
 **super_agent/app/services/workspace_context.py** (48 lines) — Load CODEBASE.md; auto-generate if missing.
@@ -189,7 +191,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   class AppContainer
   def build_container()
 
-**super_agent/app/api/routes.py** (273 lines) — SSE endpoint: streams the agent response token-by-token.
+**super_agent/app/api/routes.py** (350 lines) — SSE endpoint: streams the agent response token-by-token.
   def get_container()
   def blueprint_status()
   def next_gaps()
@@ -207,6 +209,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   def codebase_refresh()
   class ImproveRequestBody
   def request_improvement()
+  def request_fullstack_improvement() — Full-stack improvement: applies backend change then updates agent-api.ts and Age
   def improvement_history()
   def research_trigger()
   class HeartbeatTopicsRequest
@@ -214,6 +217,8 @@ nextjstester/       Next.js 16 frontend (local tester)
   def heartbeat_topics_set() — Replace the HEARTBEAT.md topic list.
   def sica_summary()
   def benchmark_history()
+  def get_os_info() — Returns information about the operating system where the agent is running.
+  def list_files() — Lists files and directories within the agent's data directory.
 
 **super_agent/app/api/websocket_manager.py** (10 lines) — WebSocket session manager (stub for streaming agent / tool traces).
   class WebSocketManager
