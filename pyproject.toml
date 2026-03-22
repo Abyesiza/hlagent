@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "super-agent"
+version = "0.1.0"
+description = "Neuro-symbolic self-evolving agent (FastAPI + Gemini + SymPy + HDC)"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic-settings>=2.6.0",
+  "httpx>=0.27.0",
+  "sympy>=1.13.0",
+  "numpy>=2.0.0",
+  "google-genai>=1.0.0",
+  "apscheduler>=3.10.0",
+]
+
+[project.optional-dependencies]
+torchhd = ["torch>=2.2.0", "torchhd>=5.7.0"]
+arq = ["arq>=0.26.0", "redis>=5.0.0"]
+dev = ["pytest>=8.0.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["super_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
