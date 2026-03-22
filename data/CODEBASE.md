@@ -148,10 +148,12 @@ nextjstester/       Next.js 16 frontend (local tester)
   def _extract_python()
   class SuperAgentOrchestrator — Connects workspace context → intent → SymPy or Gemini → HDC memory.
 
-**super_agent/app/services/research_loop.py** (54 lines)
+**super_agent/app/services/research_loop.py** (103 lines) — Reads the user's persona from PERSONA.md.
   def read_heartbeat_topics()
+  def read_persona() — Reads the user's persona from PERSONA.md.
+  def append_persona() — Appends or creates the user's persona in PERSONA.md.
   def append_memory()
-  def run_proactive_research()
+  def run_proactive_research() — Performs proactive research based on HEARTBEAT topics or, if none,
 
 **super_agent/app/services/session_store.py** (102 lines) — In-memory sessions, optionally persisted to data/sessions/<id>.json.
   class Turn
