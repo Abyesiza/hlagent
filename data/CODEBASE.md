@@ -49,7 +49,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   class Settings
   def get_settings()
 
-**super_agent/app/core/gemini_client.py** (233 lines) — Opaque handle for a long-running Gemini Interactions / background job.
+**super_agent/app/core/gemini_client.py** (278 lines) — Opaque handle for a long-running Gemini Interactions / background job.
   class GeminiInteractionHandle — Opaque handle for a long-running Gemini Interactions / background job.
   def _model_chain()
   def _friendly_gemini_failure()
@@ -68,7 +68,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   class AgentPhase
   class AgentTurnState
 
-**super_agent/app/domain/blueprint_status.py** (88 lines) — Single source of truth for human + API: what is implemented vs still open.
+**super_agent/app/domain/blueprint_status.py** (101 lines) — Single source of truth for human + API: what is implemented vs still open.
   class PhaseId
   class WorkItem
   class BlueprintSnapshot — Single source of truth for human + API: what is implemented vs still open.
@@ -90,9 +90,11 @@ nextjstester/       Next.js 16 frontend (local tester)
   class SymCodeRequest — LLM-generated SymPy script (deterministic execution path).
   class SymCodeResult
 
-**super_agent/app/domain/quantum_inspired.py** (29 lines) — Quantum-inspired mixing: map classical costs through trigonometric interference.
+**super_agent/app/domain/quantum_inspired.py** (69 lines) — Quantum-inspired optimization for SICA candidate selection.
   def qaoa_style_scores() — Quantum-inspired mixing: map classical costs through trigonometric interference.
-  def pick_best_candidate_index() — Lower cost is better (minimization).
+  def pick_best_candidate_index() — Return the index of the best (lowest mixed score) candidate.
+  def estimate_candidate_costs() — Produce three real cost estimates for SICA candidate dimensions:
+  def score_summary() — Return a human-readable scoring dict for status display.
 
 ### `infrastructure/` — Adapters: SymPy runner, intent router, HDC store, AST checker, git, Docker
 
@@ -106,7 +108,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   def git_commit_all()
   def current_head()
 
-**super_agent/app/infrastructure/hdc_memory_store.py** (87 lines) — File-backed associative store using bundled hypervectors for retrieval.
+**super_agent/app/infrastructure/hdc_memory_store.py** (146 lines) — HDC associative memory store backed by JSON.
   def _fingerprint()
   class AssociationRecord
   class HDCMemoryStore — File-backed associative store using bundled hypervectors for retrieval.
@@ -114,8 +116,11 @@ nextjstester/       Next.js 16 frontend (local tester)
 **super_agent/app/infrastructure/intent_router.py** (21 lines)
   def classify_intent()
 
-**super_agent/app/infrastructure/sandbox_docker.py** (49 lines) — Optional Docker isolation. Requires Docker daemon and `enable_docker_sandbox`.
-  def run_in_docker() — Optional Docker isolation. Requires Docker daemon and `enable_docker_sandbox`.
+**super_agent/app/infrastructure/sandbox_docker.py** (132 lines) — Sandbox execution: subprocess-based (always available) with optional Docker.
+  class SandboxResult
+  def run_subprocess_sandbox() — Execute Python code in an isolated subprocess.
+  def run_docker_sandbox() — Run a command in Docker with the workspace mounted.
+  def run_sandbox() — Route to Docker if enabled and available, otherwise subprocess.
 
 **super_agent/app/infrastructure/sympy_runner.py** (150 lines) — True when the model returned error-like prose instead of a Python code block.
   def llm_output_suspicious_for_symcode() — True when the model returned error-like prose instead of a Python code block.
@@ -127,7 +132,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/services/__init__.py** (2 lines) — Orchestration services.
 
-**super_agent/app/services/agent_loop.py** (101 lines) — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
+**super_agent/app/services/agent_loop.py** (79 lines) — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
   class AgentJob
   class AgentLoopService — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
 
@@ -142,9 +147,10 @@ nextjstester/       Next.js 16 frontend (local tester)
 **super_agent/app/services/heartbeat.py** (36 lines)
   def attach_heartbeat()
 
-**super_agent/app/services/orchestrator.py** (352 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
+**super_agent/app/services/orchestrator.py** (414 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
   def _today_str()
   def _needs_search()
+  def _is_improve_intent()
   def _extract_python()
   class SuperAgentOrchestrator — Connects workspace context → intent → SymPy or Gemini → HDC memory.
 
@@ -160,11 +166,13 @@ nextjstester/       Next.js 16 frontend (local tester)
   class Session
   class SessionStore — In-memory sessions, optionally persisted to data/sessions/<id>.json.
 
-**super_agent/app/services/sica_loop.py** (63 lines) — Placeholder score in [0,1]; replace with pytest subset / SWE-bench harness.
-  def local_benchmark_stub() — Placeholder score in [0,1]; replace with pytest subset / SWE-bench harness.
-  def plan_improvements()
-  def sica_step() — Inner loop: write file → AST liveness → optional git commit → HDC success vector
-  def run_outer_loop_summary()
+**super_agent/app/services/sica_loop.py** (175 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
+  def run_pytest_benchmark() — Run the test suite under `repo/tests/` and return a score dict.
+  def _save_benchmark()
+  def load_benchmark_history()
+  def plan_improvements() — Build a real improvement plan from live blueprint gaps and benchmark score.
+  def sica_step() — Inner loop: write file → AST liveness → git commit → HDC vector → quantum pick.
+  def run_outer_loop_summary() — Run benchmark → plan improvements → save history → return JSON summary.
 
 **super_agent/app/services/workspace_context.py** (48 lines) — Load CODEBASE.md; auto-generate if missing.
   def _tail_text()
@@ -177,27 +185,35 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/api/__init__.py** (2 lines) — HTTP / WebSocket API.
 
-**super_agent/app/api/deps.py** (38 lines)
+**super_agent/app/api/deps.py** (43 lines) — Alias for routes that reference c.memory.
   class AppContainer
   def build_container()
 
-**super_agent/app/api/routes.py** (146 lines)
+**super_agent/app/api/routes.py** (273 lines) — SSE endpoint: streams the agent response token-by-token.
   def get_container()
   def blueprint_status()
   def next_gaps()
   class ChatRequest
-  class ImproveRequestBody
   def chat_sync()
+  def chat_stream() — SSE endpoint: streams the agent response token-by-token.
   def start_agent()
   def get_job()
   def sympy_run()
   def route_intent()
+  class SandboxRunRequest
+  def sandbox_run() — Execute Python code in the sandbox (subprocess by default, Docker if enabled).
+  def memory_list()
   def codebase_snapshot()
   def codebase_refresh()
+  class ImproveRequestBody
   def request_improvement()
   def improvement_history()
   def research_trigger()
+  class HeartbeatTopicsRequest
+  def heartbeat_topics_get()
+  def heartbeat_topics_set() — Replace the HEARTBEAT.md topic list.
   def sica_summary()
+  def benchmark_history()
 
 **super_agent/app/api/websocket_manager.py** (10 lines) — WebSocket session manager (stub for streaming agent / tool traces).
   class WebSocketManager

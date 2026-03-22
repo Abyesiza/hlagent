@@ -3,112 +3,182 @@
     {
       "task_fp": "say hi",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 2
     },
     {
       "task_fp": "what is 2+2 in one sentence?",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 2
     },
     {
       "task_fp": "say hi",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "what is 2+2 in one sentence?",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "say hi",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "hey tell me about the iran war",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "tell me about the iran war",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "what is 2+2 in one sentence?",
       "solution_repr": "[gemini error: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\\n* Quota exceeded for metric: generativelanguage.",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "say hi",
       "solution_repr": "[gemini error: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\\n* Quota exceeded for metric: generativelanguage.",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "tell me about the iran war",
       "solution_repr": "[gemini error: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash\\n* Quota exceeded for metric: generative",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "tell me about the iran war",
       "solution_repr": "[gemini error: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\\n* Quota exceeded for metric: generativelanguage.",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "[gemini error: 429 resource_exhausted. {'error': {'code': 429, 'message': 'you exceeded your current quota, please check your plan and billing details. for more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-",
       "solution_repr": "API_RESOURCE_EXHAUSTED_ERROR_RECEIVED_INSTEAD_OF_PROBLEM",
-      "route": "symbolic"
+      "route": "symbolic",
+      "retrieval_count": 0
     },
     {
       "task_fp": "[gemini error: 429 resource_exhausted. {'error': {'code': 429, 'message': 'you exceeded your current quota, please check your plan and billing details. for more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-",
       "solution_repr": "0",
-      "route": "symbolic"
+      "route": "symbolic",
+      "retrieval_count": 0
     },
     {
       "task_fp": "tell me about the iran war",
       "solution_repr": "Please clarify which \"Iran war\" you are referring to, as there have been several conflicts involving Iran throughout history, and the term can be interpreted in various ways.\n\nFor example, are you asking about:\n*   The Iran-Iraq War (1980-1988)?\n*   Historical conflicts involving Persia/Iran?\n*   Current geopolitical tensions or proxy conflicts?\n\nOnce you specify, I can provide more relevant information.",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "always search current thats it. what is happening currently",
       "solution_repr": "Okay, I will search for current events.\n\n**Searching:** current events",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "tell me about the iran war",
       "solution_repr": "The term \"Iran war\" can refer to different conflicts throughout history. The most significant and widely recognized conflict that involved Iran as a primary belligerent in recent history is the **Iran-Iraq War (1980-1988)**.\n\nHere's a concise overview:\n\n*   **Dates:** September 22, 1980 \u2013 August 20, 1988.\n*   **Belligerents:** Primarily Iran and Iraq. Iraq received support from several Arab states and, at various times, some Western nations.\n*   **Causes:** The war began with Iraq's invasion of ",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "the iran war 2026",
       "solution_repr": "I cannot predict future geopolitical events or specific conflicts such as \"the Iran war 2026.\" Geopolitical situations are highly complex and constantly evolving, depending on numerous unpredictable factors.",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "okay 1 plus 1",
       "solution_repr": "1 plus 1 equals **2**.",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "what is 2+2 in one sentence?",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY or GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "say hi",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY or GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "yes this requires a lot of reading and reserhcing on the documentation. but i need it done",
       "solution_repr": "I understand your determination to have these features implemented, and you're absolutely right \u2013 this requires substantial research into documentation and careful planning.\n\nAs the Super Agent, while I don't have the immediate ability to \"magically\" write and deploy entire new external integrations myself in a single step, I *can* leverage my research capabilities and symbolic planning to **help you break down this complex problem and guide the implementation process.** My goal is to assist in ",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
     },
     {
       "task_fp": "okay now i need a way of having my agent know if its on the laptop or browser or anything and tell me if it has access to my files on my machine or not if not i want to work on getting access",
       "solution_repr": "[gemini error: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}]",
-      "route": "neural"
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY or GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY or GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what are you currently able to do?",
+      "solution_repr": "[gemini error: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2 + 2 using sympy?",
+      "solution_repr": "4",
+      "route": "symbolic",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
     }
   ]
 }

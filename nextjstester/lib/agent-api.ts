@@ -57,11 +57,12 @@ export async function postChat(
   base: string,
   message: string,
   sessionId: string | null,
+  autoImprove = false,
 ): Promise<ChatTurnResult> {
   const r = await fetch(`${base}/api/v1/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, auto_improve: autoImprove }),
   });
   const data = (await r.json()) as ChatTurnResult;
   if (!r.ok) throw new Error((data as unknown as { detail?: string }).detail ?? `HTTP ${r.status}`);
@@ -72,11 +73,12 @@ export async function startAgentJob(
   base: string,
   prompt: string,
   sessionId: string | null,
+  autoImprove = false,
 ): Promise<{ job_id: string }> {
   const r = await fetch(`${base}/api/v1/agent/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, session_id: sessionId }),
+    body: JSON.stringify({ prompt, session_id: sessionId, auto_improve: autoImprove }),
   });
   const data = await r.json();
   if (!r.ok) throw new Error((data as { detail?: string }).detail ?? `HTTP ${r.status}`);

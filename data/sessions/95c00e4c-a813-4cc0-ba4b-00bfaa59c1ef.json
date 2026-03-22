@@ -155,6 +155,20 @@
       "route": "neural",
       "grounded": true,
       "ts": "2026-03-22T20:44:15.938387+00:00"
+    },
+    {
+      "role": "user",
+      "text": "What are you currently able to do?",
+      "route": "",
+      "grounded": false,
+      "ts": "2026-03-22T21:12:03.912310+00:00"
+    },
+    {
+      "role": "assistant",
+      "text": "[gemini error: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.', 'status': 'NOT_FOUND'}}]",
+      "route": "neural",
+      "grounded": false,
+      "ts": "2026-03-22T21:12:03.912400+00:00"
     }
   ]
 }

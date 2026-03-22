@@ -16,7 +16,8 @@ def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
         get_settings.cache_clear()
         return
     # Empty env overrides values from `.env` so tests never use a real key.
-    monkeypatch.setenv("SUPER_AGENT_GEMINI_API_KEY", "")
+    for suffix in ("", "_1", "_2", "_3", "_4", "_5"):
+        monkeypatch.setenv(f"SUPER_AGENT_GEMINI_API_KEY{suffix}", "")
     monkeypatch.setenv("GEMINI_API_KEY", "")
     get_settings.cache_clear()
     yield

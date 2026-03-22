@@ -22,6 +22,21 @@ _CURRENT_EVENTS_RE = re.compile(
     re.I,
 )
 
+_IMPROVE_VERBS_RE = re.compile(
+    r"^\s*(?:please\s+|can\s+you\s+|could\s+you\s+|i\s+want\s+you\s+to\s+)?"
+    r"(?:add|implement|create|build|write|fix|refactor|extend|integrate|"
+    r"update|improve|enable|remove|delete|make\s+the)\b",
+    re.I,
+)
+
+_CODE_NOUN_RE = re.compile(
+    r"\b(?:endpoint|route|api|feature|module|function|class|method|codebase|"
+    r"the\s+code|the\s+agent|the\s+system|capability|to\s+the\s+code|"
+    r"in\s+the\s+code|session|memory|search|heartbeat|sica|improvement|"
+    r"rate\s+limit|middleware|authentication|websocket|pipeline|loop|service)\b",
+    re.I,
+)
+
 
 def _today_str() -> str:
     return datetime.now(UTC).strftime("%A, %B %d, %Y")
@@ -29,6 +44,10 @@ def _today_str() -> str:
 
 def _needs_search(text: str) -> bool:
     return bool(_CURRENT_EVENTS_RE.search(text))
+
+
+def _is_improve_intent(text: str) -> bool:
+    return bool(_IMPROVE_VERBS_RE.match(text)) and bool(_CODE_NOUN_RE.search(text))
 
 _SYM_CODE_PROMPT = """You are a SymPy code generator. Output ONLY one Python code block in markdown.
 
@@ -89,7 +108,7 @@ class SuperAgentOrchestrator:
             base += "\n## Directives\n" + preamble
         return base
 
-    def run(self, message: str, session_id: str | None = None) -> ChatTurnResult:
+    def run(self, message: str, session_id: str | None = None, auto_improve: bool = False) -> ChatTurnResult:
         message = (message or "").strip()
         if not message:
             return ChatTurnResult(route="error", answer="Empty message.", intent="unknown")
@@ -115,7 +134,9 @@ class SuperAgentOrchestrator:
             "date": _today_str(),
         }
 
-        if intent == SymbolicIntent.SYMBOLIC:
+        if auto_improve and self._gemini.enabled and _is_improve_intent(message):
+            result = self._run_with_improve(message, preamble, hdc_hint, meta, matched_fp, history)
+        elif intent == SymbolicIntent.SYMBOLIC:
             result = self._run_symbolic(message, preamble, hdc_hint, meta, matched_fp, history)
         else:
             result = self._run_neural(message, preamble, hdc_hint, intent.value, meta, matched_fp, history)
@@ -126,6 +147,47 @@ class SuperAgentOrchestrator:
             self._sessions.save(session_id)  # type: ignore[arg-type]
 
         return result
+
+    def _run_with_improve(
+        self,
+        message: str,
+        preamble: str,
+        hdc_hint: str,
+        meta: dict[str, object],
+        matched_fp: str | None,
+        history: list[dict[str, str]] | None,
+    ) -> ChatTurnResult:
+        """Run the self-improvement pipeline and narrate the result as a chat turn."""
+        sys_instr = self._system_instruction(preamble)
+        sim = meta.get("hdc_similarity")
+        hdc_sim = float(sim) if isinstance(sim, (int, float)) else None
+
+        improve_result = self.improve_self(message)
+
+        if improve_result.ok:
+            explain_prompt = (
+                f"You just applied a code improvement to `{improve_result.target_file}`.\n"
+                f"Instruction: {message}\n"
+                "Write a concise 2–3 sentence explanation for the user: what was changed and why it matters."
+            )
+            explanation = self._gemini.generate_text(
+                explain_prompt, model=self._settings.gemini_model_flash,
+                history=history, system_instruction=sys_instr,
+            )
+            answer = explanation
+        else:
+            answer = (
+                f"I attempted to apply that change but encountered an issue:\n\n"
+                f"> {improve_result.error}\n\n"
+                "You can try again with a more specific instruction or target file."
+            )
+
+        meta["improve_result"] = improve_result.model_dump()
+        return ChatTurnResult(
+            route="neural", intent="improve", answer=answer,
+            hdc_similarity=hdc_sim, hdc_matched_task=matched_fp,
+            context_snippet=preamble[:300], metadata=meta,
+        )
 
     def improve_self(self, instruction: str, target_file: str | None = None) -> "ImproveResult":
         """

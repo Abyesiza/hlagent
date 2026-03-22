@@ -19,6 +19,11 @@ class AppContainer:
     orchestrator: SuperAgentOrchestrator
     agent_loop: AgentLoopService
 
+    @property
+    def memory(self) -> HDCMemoryStore:
+        """Alias for routes that reference c.memory."""
+        return self.hdc_memory
+
 
 def build_container() -> AppContainer:
     settings = get_settings()

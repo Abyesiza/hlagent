@@ -30,7 +30,7 @@ class BlueprintSnapshot(BaseModel):
     Bump `version` when phases change; clients compare to prior to drive evolution.
     """
 
-    version: int = 1
+    version: int = 2
     items: list[WorkItem] = Field(default_factory=list)
 
     def next_gaps(self) -> list[WorkItem]:
@@ -39,49 +39,62 @@ class BlueprintSnapshot(BaseModel):
 
 def default_blueprint() -> BlueprintSnapshot:
     return BlueprintSnapshot(
-        version=1,
+        version=2,
         items=[
             WorkItem(
                 id=PhaseId.P1_ASYNC.value,
-                title="Async backbone: FastAPI, BackgroundTasks, Gemini wrapper",
-                status="partial",
-                notes="Orchestrator + /api/v1/chat wired; Interactions API polling + Redis/ARQ still open.",
+                title="Async backbone: FastAPI, BackgroundTasks, Gemini streaming",
+                status="done",
+                notes="POST /chat (sync), POST /agent/start (ThreadPoolExecutor jobs), "
+                      "POST /chat/stream (SSE token streaming via generate_text_stream).",
             ),
             WorkItem(
                 id=PhaseId.P2_NEURO_SYMBOLIC.value,
                 title="Neuro-symbolic router + SymPy sandbox execution",
-                status="partial",
-                notes="End-to-end: intent → Gemini SymPy codegen → run_symcode; add Z3 / richer NL→SymPy.",
+                status="done",
+                notes="classify_intent → SYMBOLIC path: Gemini SymPy codegen → run_symcode "
+                      "with retry + neural fallback. NEURAL path: plain or search-grounded Gemini.",
             ),
             WorkItem(
                 id=PhaseId.P3_HDC.value,
                 title="HDC memory (10k-dim bundling/binding, cosine retrieval)",
-                status="partial",
-                notes="hdc_memory.json + orchestrator retrieve/remember; optional torchhd extra for GPU.",
+                status="done",
+                notes="hdc_memory.json + orchestrator retrieve/remember + retrieval_count tracking. "
+                      "torchhd GPU backend auto-detected (numpy fallback always active). "
+                      "GET /api/v1/memory/list exposes stored records.",
             ),
             WorkItem(
                 id=PhaseId.P4_QUANTUM.value,
                 title="Quantum-inspired optimization (QAOA-style scoring)",
-                status="partial",
-                notes="Classical simulation layer; plug into SICA candidate selection.",
+                status="done",
+                notes="estimate_candidate_costs() produces real costs from benchmark score, "
+                      "blueprint gap count, and HDC record count. Connected to SICA candidate "
+                      "selection via pick_best_candidate_index(). score_summary() exposed on "
+                      "GET /api/v1/sica/summary.",
             ),
             WorkItem(
                 id=PhaseId.P5_SICA.value,
                 title="SICA dual-loop: assess, plan JSON, AST liveness, git commit",
-                status="partial",
-                notes="Hooks stubbed; SWE-bench harness not included.",
+                status="done",
+                notes="run_pytest_benchmark() runs the real test suite and returns pass-rate. "
+                      "plan_improvements() reads live blueprint gaps. Benchmark history saved to "
+                      "data/benchmark_history.jsonl. GET /api/v1/benchmark/history available.",
             ),
             WorkItem(
                 id=PhaseId.P6_HEARTBEAT.value,
                 title="Heartbeat + proactive research from HEARTBEAT.md",
-                status="partial",
-                notes="APScheduler; shorten interval via SUPER_AGENT_HEARTBEAT_INTERVAL_SECONDS in dev.",
+                status="done",
+                notes="APScheduler fires every 30 min (SUPER_AGENT_HEARTBEAT_INTERVAL_SECONDS). "
+                      "Reads data/HEARTBEAT.md topics, writes findings to MEMORY.md. "
+                      "GET/POST /api/v1/heartbeat/topics to read/update topics live.",
             ),
             WorkItem(
                 id=PhaseId.P7_DEPLOY.value,
-                title="Docker sandbox default + revert-to-stable-git-hash",
-                status="todo",
-                notes="Sandbox opt-in; auto-revert needs tagged stable + CI.",
+                title="Docker sandbox default + subprocess fallback + revert-to-stable",
+                status="done",
+                notes="run_sandbox() routes to Docker (--network=none, --memory=256m) when "
+                      "SUPER_AGENT_ENABLE_DOCKER_SANDBOX=true, falls back to python -I subprocess. "
+                      "POST /api/v1/sandbox/run. git revert via current_head() + git_commit_all().",
             ),
         ],
     )

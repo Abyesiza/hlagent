@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from super_agent.app.api.deps import AppContainer
@@ -14,6 +18,8 @@ from super_agent.app.infrastructure.sympy_runner import run_symcode
 
 router = APIRouter(prefix="/api/v1")
 
+_stream_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sse")
+
 
 def get_container(request: Request) -> AppContainer:
     return request.app.state.container
@@ -21,6 +27,8 @@ def get_container(request: Request) -> AppContainer:
 
 ContainerDep = Annotated[AppContainer, Depends(get_container)]
 
+
+# ── blueprint ─────────────────────────────────────────────────────────────────
 
 @router.get("/status", response_model=BlueprintSnapshot)
 def blueprint_status() -> BlueprintSnapshot:
@@ -33,30 +41,69 @@ def next_gaps() -> dict[str, object]:
     return {"version": bp.version, "gaps": [i.model_dump() for i in bp.next_gaps()]}
 
 
+# ── chat ──────────────────────────────────────────────────────────────────────
+
 class ChatRequest(BaseModel):
     message: str = ""
     prompt: str = ""
     session_id: str | None = None
-
-
-class ImproveRequestBody(BaseModel):
-    instruction: str
-    target_file: str | None = None
+    auto_improve: bool = False
 
 
 @router.post("/chat", response_model=ChatTurnResult)
 def chat_sync(body: ChatRequest, c: ContainerDep) -> ChatTurnResult:
     message = body.message or body.prompt
-    result = c.orchestrator.run(message, session_id=body.session_id)
+    result = c.orchestrator.run(message, session_id=body.session_id, auto_improve=body.auto_improve)
     result.grounded = result.metadata.get("grounded", False)  # type: ignore[assignment]
     result.session_id = body.session_id
     return result
 
 
+@router.post("/chat/stream")
+async def chat_stream(body: ChatRequest, c: ContainerDep) -> StreamingResponse:
+    """
+    SSE endpoint: streams the agent response token-by-token.
+    Events:
+      {"type":"start"}
+      {"type":"token","text":"..."}
+      {"type":"done","result":{...ChatTurnResult...}}
+    """
+    orchestrator = c.orchestrator
+    message = body.message or body.prompt
+
+    async def event_gen():
+        yield f"data: {json.dumps({'type': 'start'})}\n\n"
+        loop = asyncio.get_event_loop()
+        # Run the full orchestrator in a thread so we don't block the event loop
+        result: ChatTurnResult = await loop.run_in_executor(
+            _stream_executor,
+            lambda: orchestrator.run(
+                message, session_id=body.session_id, auto_improve=body.auto_improve
+            ),
+        )
+        # Stream the answer word-by-word
+        words = result.answer.split(" ")
+        for i, word in enumerate(words):
+            chunk = word + (" " if i < len(words) - 1 else "")
+            yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+            await asyncio.sleep(0.015)
+        result.grounded = result.metadata.get("grounded", False)  # type: ignore[assignment]
+        result.session_id = body.session_id
+        yield f"data: {json.dumps({'type': 'done', 'result': result.model_dump()})}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── async jobs ────────────────────────────────────────────────────────────────
+
 @router.post("/agent/start")
 def start_agent(body: ChatRequest, c: ContainerDep) -> dict[str, str]:
     prompt = body.message or body.prompt
-    job_id = c.agent_loop.start_turn(prompt, session_id=body.session_id)
+    job_id = c.agent_loop.start_turn(prompt, session_id=body.session_id, auto_improve=body.auto_improve)
     return {"job_id": job_id, "status": "accepted"}
 
 
@@ -65,14 +112,15 @@ def get_job(job_id: str, c: ContainerDep) -> dict[str, object]:
     job = c.agent_loop.get_job(job_id)
     if not job:
         return {"error": "not found"}
-    out: dict[str, object] = {
+    return {
         "job_id": job.job_id,
         "phase": job.state.phase.value,
         "result": job.turn.model_dump() if job.turn else None,
         "error": job.error,
     }
-    return out
 
+
+# ── symbolic math ─────────────────────────────────────────────────────────────
 
 @router.post("/sympy/run")
 def sympy_run(req: SymCodeRequest) -> dict[str, object]:
@@ -85,6 +133,40 @@ def route_intent(body: dict[str, str]) -> dict[str, str]:
     text = body.get("text") or ""
     return {"intent": classify_intent(text).value}
 
+
+# ── sandbox ───────────────────────────────────────────────────────────────────
+
+class SandboxRunRequest(BaseModel):
+    code: str
+    timeout: int = 15
+
+
+@router.post("/sandbox/run")
+def sandbox_run(body: SandboxRunRequest, c: ContainerDep) -> dict[str, object]:
+    """
+    Execute Python code in the sandbox (subprocess by default, Docker if enabled).
+    """
+    from super_agent.app.infrastructure.sandbox_docker import run_sandbox
+    result = run_sandbox(c.settings, body.code, body.timeout)
+    return {
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "backend": result.backend,
+        "timed_out": result.timed_out,
+    }
+
+
+# ── HDC memory ────────────────────────────────────────────────────────────────
+
+@router.get("/memory/list")
+def memory_list(c: ContainerDep) -> dict[str, object]:
+    records = c.memory.list_records()
+    stats = c.memory.stats()
+    return {"records": records, "stats": stats}
+
+
+# ── codebase ──────────────────────────────────────────────────────────────────
 
 @router.get("/codebase/snapshot")
 def codebase_snapshot(c: ContainerDep) -> dict[str, str]:
@@ -101,6 +183,13 @@ def codebase_refresh(c: ContainerDep) -> dict[str, object]:
     return {"status": "ok", "path": str(out), "bytes": size}
 
 
+# ── self-improve ──────────────────────────────────────────────────────────────
+
+class ImproveRequestBody(BaseModel):
+    instruction: str
+    target_file: str | None = None
+
+
 @router.post("/improve", response_model=None)
 def request_improvement(body: ImproveRequestBody, c: ContainerDep) -> dict[str, object]:
     from super_agent.app.domain.chat_schemas import ImproveRequest
@@ -111,11 +200,9 @@ def request_improvement(body: ImproveRequestBody, c: ContainerDep) -> dict[str, 
 
 @router.get("/improve/history")
 def improvement_history(c: ContainerDep, limit: int = 20) -> dict[str, object]:
-    from super_agent.app.domain.chat_schemas import ImproveResult
     history_file = c.settings.data_dir / "improvements.jsonl"
     if not history_file.is_file():
         return {"entries": []}
-    import json
     lines = history_file.read_text(encoding="utf-8").strip().splitlines()
     entries = []
     for line in lines[-limit:]:
@@ -125,6 +212,8 @@ def improvement_history(c: ContainerDep, limit: int = 20) -> dict[str, object]:
             pass
     return {"entries": list(reversed(entries))}
 
+
+# ── research & heartbeat ──────────────────────────────────────────────────────
 
 @router.post("/research/trigger")
 def research_trigger(background_tasks: BackgroundTasks, c: ContainerDep) -> dict[str, str]:
@@ -137,9 +226,47 @@ def research_trigger(background_tasks: BackgroundTasks, c: ContainerDep) -> dict
     return {"status": "scheduled"}
 
 
-@router.get("/sica/summary")
-def sica_summary(c: ContainerDep) -> dict[str, str]:
-    from super_agent.app.services import sica_loop
+class HeartbeatTopicsRequest(BaseModel):
+    topics: list[str]
 
-    summary = sica_loop.run_outer_loop_summary(c.settings.data_dir.parent)
-    return {"summary": summary}
+
+@router.get("/heartbeat/topics")
+def heartbeat_topics_get(c: ContainerDep) -> dict[str, object]:
+    from super_agent.app.services.research_loop import read_heartbeat_topics
+    topics = read_heartbeat_topics(c.settings.data_dir)
+    return {"topics": topics}
+
+
+@router.post("/heartbeat/topics")
+def heartbeat_topics_set(body: HeartbeatTopicsRequest, c: ContainerDep) -> dict[str, object]:
+    """Replace the HEARTBEAT.md topic list."""
+    heartbeat_path = c.settings.data_dir / "HEARTBEAT.md"
+    heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# Heartbeat topics", "", "The agent researches these automatically on each heartbeat.", ""]
+    for t in body.topics:
+        lines.append(f"- {t}")
+    heartbeat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"status": "ok", "topics": body.topics, "path": str(heartbeat_path)}
+
+
+# ── SICA ─────────────────────────────────────────────────────────────────────
+
+@router.get("/sica/summary")
+def sica_summary(c: ContainerDep) -> dict[str, object]:
+    from super_agent.app.services import sica_loop
+    from super_agent.app.domain.quantum_inspired import score_summary
+
+    summary_json = sica_loop.run_outer_loop_summary(c.settings.data_dir.parent)
+    plan = json.loads(summary_json)
+    q_score = score_summary(
+        benchmark_score=plan.get("score", 0.0),
+        gap_count=len(plan.get("gaps", [])),
+        hdc_record_count=len(c.memory.list_records()),
+    )
+    return {"summary": summary_json, "quantum_score": q_score}
+
+
+@router.get("/benchmark/history")
+def benchmark_history(c: ContainerDep, limit: int = 10) -> dict[str, object]:
+    from super_agent.app.services.sica_loop import load_benchmark_history
+    return {"entries": load_benchmark_history(c.settings.data_dir, limit)}
