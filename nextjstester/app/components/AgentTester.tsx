@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  clearResearchMemory,
   fetchBlueprint,
   fetchCodebaseSnapshot,
   fetchHealth,
+  fetchHeartbeatStatus,
   fetchImprovements,
+  fetchResearchMemory,
   fetchSicaSummary,
   getAgentBaseUrl,
   getAgentJob,
@@ -15,13 +18,16 @@ import {
   requestFullStackImprovement,
   requestImprovement,
   resetSessionId,
+  setHeartbeatTopics,
   startAgentJob,
+  triggerResearch,
 } from "@/lib/agent-api";
 import type {
   BlueprintSnapshot,
   ChatMessage,
   ChatTurnResult,
   FullStackImproveResult,
+  HeartbeatStatus,
   ImprovementHistory,
   ImproveResult,
 } from "@/lib/types";
@@ -305,7 +311,7 @@ const SUGGESTIONS = [
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
-type Tab = "chat" | "codebase" | "improve" | "status";
+type Tab = "chat" | "research" | "codebase" | "improve" | "status";
 type ThinkingStage = "thinking" | "searching" | "writing code" | "applying";
 
 // ─── main component ───────────────────────────────────────────────────────────
@@ -345,6 +351,14 @@ export default function AgentTester() {
   // status
   const [blueprint, setBlueprint] = useState<BlueprintSnapshot | null>(null);
   const [sica, setSica] = useState("");
+
+  // research tab
+  const [memory, setMemory] = useState("");
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [heartbeat, setHeartbeat] = useState<HeartbeatStatus | null>(null);
+  const [topicsEdit, setTopicsEdit] = useState("");
+  const [topicsSaving, setTopicsSaving] = useState(false);
+  const [researchRunning, setResearchRunning] = useState(false);
 
   // ── init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -393,12 +407,23 @@ export default function AgentTester() {
     setImproveHistory(hist);
   }, [baseUrl]);
 
+  const loadResearch = useCallback(async () => {
+    const b = baseUrl || getAgentBaseUrl();
+    setMemoryLoading(true);
+    const [mem, hb] = await Promise.all([fetchResearchMemory(b), fetchHeartbeatStatus(b)]);
+    setMemory(mem);
+    setHeartbeat(hb);
+    if (hb?.topics) setTopicsEdit(hb.topics.join("\n"));
+    setMemoryLoading(false);
+  }, [baseUrl]);
+
   useEffect(() => {
     if (!baseUrl) return;
     if (tab === "codebase") void loadCodebase();
     if (tab === "status") void loadStatus();
     if (tab === "improve") void loadImprovements();
-  }, [tab, baseUrl, loadCodebase, loadStatus, loadImprovements]);
+    if (tab === "research") void loadResearch();
+  }, [tab, baseUrl, loadCodebase, loadStatus, loadImprovements, loadResearch]);
 
   // ── helpers ───────────────────────────────────────────────────────────────
   const persistBase = (next: string) => {
@@ -532,6 +557,7 @@ export default function AgentTester() {
   // ── tab config ────────────────────────────────────────────────────────────
   const TABS: { id: Tab; label: string; icon: string; badge?: number }[] = [
     { id: "chat",     label: "Chat",     icon: "💬" },
+    { id: "research", label: "Research", icon: "🔬", badge: memory ? undefined : undefined },
     { id: "improve",  label: "Improve",  icon: "⚡", badge: improveHistory.entries.length || undefined },
     { id: "codebase", label: "Codebase", icon: "🗂" },
     { id: "status",   label: "Status",   icon: "📊", badge: gaps.length || undefined },
@@ -539,11 +565,11 @@ export default function AgentTester() {
 
   // ─── render ───────────────────────────────────────────────────────────────
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
       {/* ── sidebar ── */}
-      <aside className="flex w-full shrink-0 flex-col gap-5 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 lg:w-60">
+      <aside className="flex w-full shrink-0 flex-row flex-wrap gap-3 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900 lg:w-56 lg:flex-col lg:gap-4 lg:p-4">
         {/* connection */}
-        <div>
+        <div className="min-w-[140px] flex-1 lg:flex-none">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">API</p>
           <input
             className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 font-mono text-[11px] text-zinc-800 focus:outline-none focus:ring-1 focus:ring-violet-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
@@ -620,13 +646,13 @@ export default function AgentTester() {
       {/* ── main ── */}
       <main className="flex min-h-0 flex-1 flex-col">
         {/* tab bar */}
-        <div className="mb-4 flex gap-0.5 rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mb-3 flex gap-0.5 overflow-x-auto rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-900">
           {TABS.map(t => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
-              className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+              className={`relative flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-all sm:text-sm ${
                 tab === t.id
                   ? "bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900"
                   : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
@@ -677,8 +703,8 @@ export default function AgentTester() {
             {/* messages */}
             <div className="flex flex-1 flex-col rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div
-                className="flex-1 overflow-y-auto px-4 py-4"
-                style={{ maxHeight: "min(62vh, 580px)" }}
+                className="flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4"
+                style={{ maxHeight: "min(55vh, 520px)" }}
               >
                 {messages.length === 0 && (
                   <div className="py-6">
@@ -1021,6 +1047,115 @@ export default function AgentTester() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ──────── RESEARCH TAB ──────── */}
+        {tab === "research" && (
+          <div className="flex flex-col gap-4">
+            {/* heartbeat status + controls */}
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="text-lg">🔬</span>
+                <p className="font-semibold text-zinc-700 dark:text-zinc-200">Proactive Research</p>
+                {heartbeat && (
+                  <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300">
+                    {heartbeat.total_runs} runs · every {Math.round(heartbeat.interval_seconds / 60)}m
+                  </span>
+                )}
+              </div>
+              {heartbeat && (
+                <div className="mb-3 rounded-lg bg-zinc-50 p-3 text-xs dark:bg-zinc-800">
+                  <div className="flex flex-wrap gap-x-6 gap-y-1">
+                    <span className="text-zinc-500">Last run: <span className="text-zinc-700 dark:text-zinc-300">{heartbeat.last_run ? new Date(heartbeat.last_run).toLocaleString() : "never"}</span></span>
+                    <span className="text-zinc-500">Topics: <span className="text-zinc-700 dark:text-zinc-300">{heartbeat.topic_count}</span></span>
+                    <span className="text-zinc-500">Next: <span className="text-violet-600 dark:text-violet-400">{heartbeat.next_topic ?? "—"}</span></span>
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={researchRunning}
+                  onClick={async () => {
+                    setResearchRunning(true);
+                    const b = baseUrl || getAgentBaseUrl();
+                    await triggerResearch(b);
+                    await new Promise(r => setTimeout(r, 1200));
+                    await loadResearch();
+                    setResearchRunning(false);
+                  }}
+                  className="flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-violet-700 disabled:opacity-50"
+                >
+                  {researchRunning
+                    ? <><span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" /> Researching…</>
+                    : "▶ Run research now"
+                  }
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadResearch()}
+                  className="rounded-lg border border-zinc-200 px-4 py-2 text-xs text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  ↺ Refresh
+                </button>
+                {memory && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm("Clear all research memory?")) return;
+                      await clearResearchMemory(baseUrl || getAgentBaseUrl());
+                      setMemory("");
+                    }}
+                    className="ml-auto rounded-lg border border-red-200 px-4 py-2 text-xs text-red-600 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                  >
+                    🗑 Clear memory
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* topics editor */}
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="mb-2 text-sm font-semibold text-zinc-700 dark:text-zinc-200">Research Topics</p>
+              <p className="mb-2 text-[11px] text-zinc-400">One topic per line. The agent researches them in rotation every {heartbeat ? Math.round(heartbeat.interval_seconds / 60) : 5} minutes.</p>
+              <textarea
+                className="mb-3 w-full resize-none rounded-lg border border-zinc-200 bg-zinc-900 px-3 py-2.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-zinc-700"
+                rows={8}
+                value={topicsEdit}
+                onChange={e => setTopicsEdit(e.target.value)}
+                placeholder={"Latest developments in AI agents (2026)\nFastAPI performance tips\nVector database comparisons"}
+              />
+              <button
+                type="button"
+                disabled={topicsSaving}
+                onClick={async () => {
+                  setTopicsSaving(true);
+                  const topics = topicsEdit.split("\n").map(t => t.trim()).filter(Boolean);
+                  await setHeartbeatTopics(baseUrl || getAgentBaseUrl(), topics);
+                  await loadResearch();
+                  setTopicsSaving(false);
+                }}
+                className="rounded-lg bg-zinc-800 px-4 py-2 text-xs font-semibold text-white transition hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              >
+                {topicsSaving ? "Saving…" : "Save topics"}
+              </button>
+            </div>
+
+            {/* memory content */}
+            <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+                <span className="text-base">📝</span>
+                <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">MEMORY.md</p>
+                {memory && <span className="ml-auto text-[10px] text-zinc-400">{(memory.length / 1024).toFixed(1)} KB</span>}
+              </div>
+              {memoryLoading
+                ? <p className="px-4 py-6 text-sm text-zinc-400">Loading…</p>
+                : memory
+                  ? <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap px-4 py-4 font-mono text-[11px] leading-relaxed text-zinc-300">{memory}</pre>
+                  : <p className="px-4 py-6 text-sm text-zinc-400">No research yet — click "Run research now" to start.</p>
+              }
+            </div>
           </div>
         )}
 

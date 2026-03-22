@@ -20,6 +20,8 @@ export type BlueprintItem = {
   notes: string;
 };
 
+export type BlueprintGap = BlueprintItem;
+
 export type BlueprintSnapshot = {
   version: number;
   items: BlueprintItem[];
@@ -63,4 +65,14 @@ export type FullStackImproveResult = {
   frontend_api: ImproveResult | null;
   frontend_ui: ImproveResult | null;
   timestamp: string;
+};
+
+export type HeartbeatStatus = {
+  last_run: string | null;
+  total_runs: number;
+  topic_count: number;
+  next_topic_index: number;
+  next_topic: string | null;
+  topics: string[];
+  interval_seconds: number;
 };

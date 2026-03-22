@@ -1,7 +1,8 @@
 # Heartbeat topics
 
-The agent researches these automatically every 30 minutes and appends findings to MEMORY.md.
+The agent researches these topics in rotation on each heartbeat.
 
+- The agent researches these automatically every 30 minutes and appends findings to MEMORY.md.
 - Latest developments in neuro-symbolic AI and language models (2026)
 - Advances in hyperdimensional computing and vector symbolic architectures
 - New techniques for LLM self-improvement and code generation

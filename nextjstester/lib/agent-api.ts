@@ -1,4 +1,4 @@
-import type { BlueprintSnapshot, ChatTurnResult, FullStackImproveResult, ImprovementHistory, ImproveResult, BlueprintGap } from "./types";
+import type { BlueprintSnapshot, ChatTurnResult, FullStackImproveResult, HeartbeatStatus, ImprovementHistory, ImproveResult, BlueprintGap } from "./types";
 
 function defaultBase(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_API_URL) {
@@ -166,4 +166,49 @@ export async function fetchSicaSummary(base: string): Promise<string> {
     const d = (await r.json()) as { summary: string };
     return d.summary ?? "";
   } catch { return ""; }
+}
+
+export async function fetchHeartbeatStatus(base: string): Promise<HeartbeatStatus | null> {
+  try {
+    const r = await fetch(`${base}/api/v1/heartbeat/status`, { cache: "no-store" });
+    if (!r.ok) return null;
+    return r.json() as Promise<HeartbeatStatus>;
+  } catch { return null; }
+}
+
+export async function setHeartbeatTopics(base: string, topics: string[]): Promise<{ ok: boolean }> {
+  try {
+    const r = await fetch(`${base}/api/v1/heartbeat/topics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topics }),
+    });
+    if (!r.ok) return { ok: false };
+    return { ok: true };
+  } catch { return { ok: false }; }
+}
+
+export async function triggerResearch(base: string): Promise<{ status: string }> {
+  try {
+    const r = await fetch(`${base}/api/v1/research/trigger`, { method: "POST" });
+    if (!r.ok) return { status: "error" };
+    return r.json() as Promise<{ status: string }>;
+  } catch { return { status: "error" }; }
+}
+
+export async function fetchResearchMemory(base: string): Promise<string> {
+  try {
+    const r = await fetch(`${base}/api/v1/memory/research`, { cache: "no-store" });
+    if (!r.ok) return "";
+    const d = (await r.json()) as { content: string };
+    return d.content ?? "";
+  } catch { return ""; }
+}
+
+export async function clearResearchMemory(base: string): Promise<{ status: string }> {
+  try {
+    const r = await fetch(`${base}/api/v1/memory/research`, { method: "DELETE" });
+    if (!r.ok) return { status: "error" };
+    return r.json() as Promise<{ status: string }>;
+  } catch { return { status: "error" }; }
 }

@@ -255,11 +255,35 @@ def heartbeat_topics_set(body: HeartbeatTopicsRequest, c: ContainerDep) -> dict[
     """Replace the HEARTBEAT.md topic list."""
     heartbeat_path = c.settings.data_dir / "HEARTBEAT.md"
     heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["# Heartbeat topics", "", "The agent researches these automatically on each heartbeat.", ""]
+    lines = ["# Heartbeat topics", "", "The agent researches these topics in rotation on each heartbeat.", ""]
     for t in body.topics:
         lines.append(f"- {t}")
     heartbeat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"status": "ok", "topics": body.topics, "path": str(heartbeat_path)}
+    return {"status": "ok", "topics": body.topics}
+
+
+@router.get("/heartbeat/status")
+def heartbeat_status_get(c: ContainerDep) -> dict[str, object]:
+    from super_agent.app.services.research_loop import heartbeat_status
+    status = heartbeat_status(c.settings.data_dir)
+    status["interval_seconds"] = c.settings.heartbeat_interval_seconds
+    return status
+
+
+# ── agent memory (MEMORY.md) ──────────────────────────────────────────────────
+
+@router.get("/memory/research")
+def memory_read(c: ContainerDep) -> dict[str, object]:
+    from super_agent.app.services.research_loop import read_memory
+    content = read_memory(c.settings.data_dir)
+    return {"content": content, "chars": len(content)}
+
+
+@router.delete("/memory/research")
+def memory_clear(c: ContainerDep) -> dict[str, object]:
+    from super_agent.app.services.research_loop import clear_memory
+    clear_memory(c.settings.data_dir)
+    return {"status": "cleared"}
 
 
 # ── SICA ─────────────────────────────────────────────────────────────────────
@@ -347,3 +371,39 @@ def list_files(
 
     # Return the path relative to base_dir in the response
     return {"current_path": str(requested_path.relative_to(base_dir)), "entries": entries}
+
+
+@router.get("/system/desktop_files")
+def list_desktop_files() -> dict[str, object]:
+    """
+    Lists files and directories directly on the user's desktop.
+    Note: This attempts to locate the standard "Desktop" directory for the current user.
+    """
+    # Attempt to find the user's desktop directory.
+    # This path is common for Windows, macOS, and many Linux distributions.
+    desktop_path = Path.home() / "Desktop"
+
+    if not desktop_path.exists():
+        return {"error": "Desktop path not found. It might be named differently or not exist.", "path": str(desktop_path)}
+    if not desktop_path.is_dir():
+        return {"error": "Desktop path is not a directory.", "path": str(desktop_path)}
+
+    entries = []
+    try:
+        for entry in desktop_path.iterdir():
+            entry_info = {
+                "name": entry.name,
+                "path": str(entry), # Use absolute path for desktop files
+                "type": "directory" if entry.is_dir() else "file",
+                "size": entry.stat().st_size if entry.is_file() else None,
+                "mtime": entry.stat().st_mtime, # Modification time
+                "is_symlink": entry.is_symlink(),
+                "is_readable": os.access(entry, os.R_OK)
+            }
+            entries.append(entry_info)
+    except PermissionError:
+        return {"error": "Permission denied to list desktop directory.", "path": str(desktop_path)}
+    except Exception as e:
+        return {"error": f"An unexpected error occurred: {str(e)}", "path": str(desktop_path)}
+
+    return {"current_path": str(desktop_path), "entries": entries}

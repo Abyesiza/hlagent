@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=lambda: Path("data").resolve())
     sandbox_dir: Path = Field(default_factory=lambda: Path("sandbox").resolve())
 
-    heartbeat_interval_seconds: int = Field(default=1800)
+    heartbeat_interval_seconds: int = Field(default=300)
     agent_loop_timeout_seconds: float = Field(default=3600.0)
 
     docker_sandbox_image: str = Field(default="python:3.12-slim")

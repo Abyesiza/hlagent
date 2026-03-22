@@ -47,7 +47,9 @@ app.include_router(router)
 @app.get("/health")
 def health() -> dict[str, object]:
     s = get_settings()
+    keys = s.all_api_keys()
     return {
         "status": "ok",
-        "gemini_configured": bool(s.gemini_api_key),
+        "gemini_configured": len(keys) > 0,
+        "gemini_key_count": len(keys),
     }

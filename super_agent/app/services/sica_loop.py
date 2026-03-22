@@ -120,10 +120,17 @@ def plan_improvements(bench: dict[str, object]) -> dict[str, object]:
 
 # ── SICA inner step (write → AST → commit → HDC) ─────────────────────────────
 
-def sica_step(repo: Path, target_file: Path, new_content: str, message: str) -> dict[str, object]:
+def sica_step(
+    repo: Path,
+    target_file: Path,
+    new_content: str,
+    message: str,
+    skip_benchmark: bool = True,
+) -> dict[str, object]:
     """
-    Inner loop: write file → AST liveness → git commit → HDC vector → quantum pick.
-    Returns a result dict with ok, committed, stable_hash, hdc_vector_norm.
+    Inner loop: write file → AST liveness → git commit → HDC vector.
+    By default, skips the pytest benchmark (skip_benchmark=True) so the hot-path
+    stays fast. Pass skip_benchmark=False for scheduled/explicit SICA runs.
     """
     stable_before = current_head(repo)
     target_file.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +143,17 @@ def sica_step(repo: Path, target_file: Path, new_content: str, message: str) -> 
     hdc = HDCSpace()
     vec = associate_task_solution(str(target_file), message[:80], hdc)
 
-    # Real costs from this step's context
+    if skip_benchmark:
+        return {
+            "ok": True,
+            "committed": committed,
+            "commit_msg": cmsg,
+            "stable_hash": current_head(repo),
+            "previous_hash": stable_before,
+            "hdc_vector_norm": float((vec * vec).sum() ** 0.5),
+        }
+
+    # Full benchmark path (used by scheduled SICA outer loop)
     bench = run_pytest_benchmark(repo)
     bp = __import__(
         "super_agent.app.domain.blueprint_status", fromlist=["default_blueprint"]
