@@ -1,4 +1,4 @@
-import type { BlueprintSnapshot, ChatTurnResult, ImprovementHistory, ImproveResult } from "./types";
+import type { BlueprintSnapshot, ChatTurnResult, FullStackImproveResult, ImprovementHistory, ImproveResult } from "./types";
 
 function defaultBase(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_AGENT_API_URL) {
@@ -123,6 +123,22 @@ export async function requestImprovement(
   const data = await r.json();
   if (!r.ok) throw new Error((data as { detail?: string }).detail ?? `HTTP ${r.status}`);
   return data as ImproveResult;
+}
+
+
+export async function requestFullStackImprovement(
+  base: string,
+  instruction: string,
+  targetFile?: string,
+): Promise<FullStackImproveResult> {
+  const r = await fetch(`${base}/api/v1/improve/fullstack`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, target_file: targetFile || null }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error((data as { detail?: string }).detail ?? `HTTP ${r.status}`);
+  return data as FullStackImproveResult;
 }
 
 export async function fetchImprovements(base: string): Promise<ImprovementHistory> {

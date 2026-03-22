@@ -15,6 +15,7 @@ from super_agent.app.services.workspace_context import build_system_preamble
 if TYPE_CHECKING:
     from super_agent.app.core.config import Settings
     from super_agent.app.core.gemini_client import GeminiClient
+    from super_agent.app.domain.chat_schemas import FullStackImproveResult, ImproveResult
 
 _CURRENT_EVENTS_RE = re.compile(
     r"\b(current|today|now|latest|recent|2025|2026|news|happening|"
@@ -188,6 +189,204 @@ class SuperAgentOrchestrator:
             hdc_similarity=hdc_sim, hdc_matched_task=matched_fp,
             context_snippet=preamble[:300], metadata=meta,
         )
+
+    def improve_full_stack(
+        self,
+        instruction: str,
+        target_file: str | None = None,
+    ) -> "FullStackImproveResult":
+        """
+        Full-stack improvement pipeline:
+        1. Improve the backend Python code (improve_self)
+        2. Update nextjstester/lib/agent-api.ts to expose any new endpoints
+        3. Update the AgentTester.tsx endpoint list + suggestions
+        """
+        from datetime import UTC, datetime
+        from super_agent.app.domain.chat_schemas import FullStackImproveResult
+
+        ts = datetime.now(UTC).isoformat()
+        backend = self.improve_self(instruction, target_file)
+        if not backend.ok:
+            return FullStackImproveResult(
+                ok=False, instruction=instruction, backend=backend, timestamp=ts
+            )
+
+        frontend_api = self._improve_frontend_api(instruction, backend)
+        frontend_ui = self._improve_frontend_ui(instruction, backend)
+
+        return FullStackImproveResult(
+            ok=True,
+            instruction=instruction,
+            backend=backend,
+            frontend_api=frontend_api,
+            frontend_ui=frontend_ui,
+            timestamp=ts,
+        )
+
+    def _improve_frontend_api(
+        self,
+        instruction: str,
+        backend: "ImproveResult",
+    ) -> "ImproveResult":
+        """Update nextjstester/lib/agent-api.ts to add functions for new backend endpoints."""
+        import json
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from super_agent.app.domain.chat_schemas import ImproveResult
+        from super_agent.app.services.sica_loop import write_non_python_file
+
+        repo_root = Path(__file__).resolve().parents[3]
+        ts = datetime.now(UTC).isoformat()
+        target = "nextjstester/lib/agent-api.ts"
+        target_path = repo_root / target
+
+        if not target_path.exists():
+            return ImproveResult(
+                ok=False, target_file=target, instruction=instruction,
+                error="agent-api.ts not found", timestamp=ts,
+            )
+
+        old_code = target_path.read_text(encoding="utf-8")
+        prompt = (
+            "You are updating a Next.js TypeScript API client file after a backend improvement.\n\n"
+            f"Instruction applied to backend: {instruction}\n\n"
+            f"Backend file modified: `{backend.target_file}`\n"
+            f"Backend new code excerpt:\n```python\n{backend.new_code[:2000]}\n```\n\n"
+            f"Current `{target}`:\n```typescript\n{old_code}\n```\n\n"
+            "Task: If the backend change introduced new API endpoints or modified existing ones, "
+            "update this file to add or update the corresponding exported async functions.\n"
+            "If there is nothing to add (no new endpoints), return the file unchanged.\n\n"
+            "Rules:\n"
+            "- Output ONLY one ```typescript ... ``` block with the complete file\n"
+            "- Preserve all existing functions exactly unless updating them\n"
+            "- Match existing code style (async/await, error handling, return types)\n"
+            "- Do not truncate with placeholders — output the full file"
+        )
+
+        raw = self._gemini.generate_text(prompt, model=self._settings.gemini_model_pro)
+        code_m = re.search(r"```(?:typescript|ts)?\s*([\s\S]*?)```", raw)
+        if not code_m:
+            return ImproveResult(
+                ok=False, target_file=target, instruction=instruction,
+                old_code=old_code, error="Gemini did not return a TypeScript block", timestamp=ts,
+            )
+
+        new_code = code_m.group(1).strip()
+        if len(new_code) < 200 or "export async function" not in new_code:
+            return ImproveResult(
+                ok=False, target_file=target, instruction=instruction,
+                old_code=old_code, new_code=new_code,
+                error="Generated code appears incomplete or missing exports", timestamp=ts,
+            )
+
+        step = write_non_python_file(
+            repo_root, target_path, new_code + "\n",
+            f"frontend-api: {instruction[:80]}",
+        )
+
+        history_file = self._settings.data_dir / "improvements.jsonl"
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        result = ImproveResult(
+            ok=bool(step.get("ok", True)),
+            target_file=target,
+            instruction=instruction,
+            old_code=old_code,
+            new_code=new_code,
+            ast_ok=True,
+            committed=bool(step.get("committed", False)),
+            commit_hash=step.get("stable_hash"),  # type: ignore[arg-type]
+            error=None if step.get("ok", True) else str(step.get("error", "")),
+            timestamp=ts,
+        )
+        with history_file.open("a", encoding="utf-8") as fh:
+            fh.write(result.model_dump_json() + "\n")
+        return result
+
+    def _improve_frontend_ui(
+        self,
+        instruction: str,
+        backend: "ImproveResult",
+    ) -> "ImproveResult":
+        """
+        Update AgentTester.tsx: add the new endpoint to the Status tab's endpoint list
+        and insert a relevant suggestion chip if applicable.
+        """
+        import json
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from super_agent.app.domain.chat_schemas import ImproveResult
+        from super_agent.app.services.sica_loop import write_non_python_file
+
+        repo_root = Path(__file__).resolve().parents[3]
+        ts = datetime.now(UTC).isoformat()
+        target = "nextjstester/app/components/AgentTester.tsx"
+        target_path = repo_root / target
+
+        if not target_path.exists():
+            return ImproveResult(
+                ok=False, target_file=target, instruction=instruction,
+                error="AgentTester.tsx not found", timestamp=ts,
+            )
+
+        old_code = target_path.read_text(encoding="utf-8")
+        prompt = (
+            "You are updating a Next.js React component (AgentTester.tsx) to expose a new backend feature.\n\n"
+            f"Instruction applied: {instruction}\n"
+            f"Backend file changed: `{backend.target_file}`\n\n"
+            f"Current component file:\n```tsx\n{old_code[:8000]}\n```\n\n"
+            "Task: Make MINIMAL, TARGETED changes only:\n"
+            "1. If a new API endpoint was added, add it to the endpoints array in the Status tab "
+            '   (look for the array of ["METHOD", "/path"] pairs).\n'
+            "2. If the feature is user-facing and significant, add ONE new suggestion chip to the "
+            "   SUGGESTIONS array at the top of the component.\n"
+            "3. No other changes — do not restructure, rename, or reformat anything.\n\n"
+            "Rules:\n"
+            "- Output ONLY one ```tsx ... ``` block with the complete file\n"
+            "- Preserve every line that is not being changed exactly as-is\n"
+            "- Do not truncate with placeholders — output the full file\n"
+            "- If there is nothing meaningful to add, return the file unchanged"
+        )
+
+        raw = self._gemini.generate_text(prompt, model=self._settings.gemini_model_pro)
+        code_m = re.search(r"```(?:tsx|typescript|ts)?\s*([\s\S]*?)```", raw)
+        if not code_m:
+            return ImproveResult(
+                ok=False, target_file=target, instruction=instruction,
+                old_code=old_code, error="Gemini did not return a TSX block", timestamp=ts,
+            )
+
+        new_code = code_m.group(1).strip()
+        # Sanity: must be a substantial React component
+        if len(new_code) < 1000 or "export default function AgentTester" not in new_code:
+            return ImproveResult(
+                ok=False, target_file=target, instruction=instruction,
+                old_code=old_code, new_code=new_code,
+                error="Generated UI code too short or missing AgentTester export", timestamp=ts,
+            )
+
+        step = write_non_python_file(
+            repo_root, target_path, new_code + "\n",
+            f"frontend-ui: {instruction[:80]}",
+        )
+
+        history_file = self._settings.data_dir / "improvements.jsonl"
+        result = ImproveResult(
+            ok=bool(step.get("ok", True)),
+            target_file=target,
+            instruction=instruction,
+            old_code=old_code,
+            new_code=new_code,
+            ast_ok=True,
+            committed=bool(step.get("committed", False)),
+            commit_hash=step.get("stable_hash"),  # type: ignore[arg-type]
+            error=None if step.get("ok", True) else str(step.get("error", "")),
+            timestamp=ts,
+        )
+        with history_file.open("a", encoding="utf-8") as fh:
+            fh.write(result.model_dump_json() + "\n")
+        return result
 
     def improve_self(self, instruction: str, target_file: str | None = None) -> "ImproveResult":
         """

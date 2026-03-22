@@ -4,13 +4,13 @@
       "task_fp": "say hi",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
       "route": "neural",
-      "retrieval_count": 3
+      "retrieval_count": 8
     },
     {
       "task_fp": "what is 2+2 in one sentence?",
       "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY]",
       "route": "neural",
-      "retrieval_count": 3
+      "retrieval_count": 8
     },
     {
       "task_fp": "say hi",
@@ -154,6 +154,66 @@
       "task_fp": "what is 2 + 2 using sympy?",
       "solution_repr": "4",
       "route": "symbolic",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is 2+2 in one sentence?",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "say hi",
+      "solution_repr": "[gemini disabled: set SUPER_AGENT_GEMINI_API_KEY in /home/joel-abyesiza/Desktop/my_projects/hlagent/.env]",
+      "route": "neural",
       "retrieval_count": 0
     },
     {

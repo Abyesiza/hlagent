@@ -160,6 +160,32 @@ def sica_step(repo: Path, target_file: Path, new_content: str, message: str) -> 
     }
 
 
+# ── non-Python file write (TypeScript, Markdown, etc.) ───────────────────────
+
+def write_non_python_file(
+    repo: Path,
+    target_file: Path,
+    new_content: str,
+    message: str,
+) -> dict[str, object]:
+    """
+    Write any non-Python file and commit it.
+    Skips Python AST check — callers are responsible for basic content validation.
+    Returns the same dict shape as sica_step for consistency.
+    """
+    stable_before = current_head(repo)
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(new_content, encoding="utf-8")
+    committed, cmsg = git_commit_all(repo, message)
+    return {
+        "ok": True,
+        "committed": committed,
+        "commit_msg": cmsg,
+        "stable_hash": current_head(repo),
+        "previous_hash": stable_before,
+    }
+
+
 # ── outer loop summary ────────────────────────────────────────────────────────
 
 def run_outer_loop_summary(repo: Path) -> str:

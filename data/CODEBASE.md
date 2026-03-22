@@ -45,16 +45,16 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/core/__init__.py** (2 lines) — Config, security, Gemini.
 
-**super_agent/app/core/config.py** (83 lines)
+**super_agent/app/core/config.py** (99 lines) — Accept GEMINI_API_KEY (no SUPER_AGENT_ prefix) as the primary key.
   class Settings
   def get_settings()
 
-**super_agent/app/core/gemini_client.py** (278 lines) — Opaque handle for a long-running Gemini Interactions / background job.
-  class GeminiInteractionHandle — Opaque handle for a long-running Gemini Interactions / background job.
+**super_agent/app/core/gemini_client.py** (296 lines) — Gemini client with multi-key rotation.
+  class GeminiInteractionHandle
   def _model_chain()
-  def _friendly_gemini_failure()
+  def _friendly_failure()
   def _extract_text()
-  class GeminiClient — Thin wrapper around google.genai.
+  class GeminiClient — Wraps google.genai with automatic key rotation on 429.
 
 **super_agent/app/core/security.py** (27 lines)
   def is_shell_command_blocked()

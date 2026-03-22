@@ -38,3 +38,14 @@ class ImproveResult(BaseModel):
     commit_hash: str | None = None
     error: str | None = None
     timestamp: str = ""
+
+
+class FullStackImproveResult(BaseModel):
+    """Wraps a backend + optional frontend improvement applied in one operation."""
+
+    ok: bool
+    instruction: str
+    backend: ImproveResult
+    frontend_api: ImproveResult | None = None   # changes to nextjstester/lib/agent-api.ts
+    frontend_ui: ImproveResult | None = None    # changes to nextjstester/app/components/AgentTester.tsx
+    timestamp: str = ""

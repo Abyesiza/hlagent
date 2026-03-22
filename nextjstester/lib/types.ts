@@ -55,3 +55,12 @@ export type ImproveResult = {
 export type ImprovementHistory = {
   entries: ImproveResult[];
 };
+
+export type FullStackImproveResult = {
+  ok: boolean;
+  instruction: string;
+  backend: ImproveResult;
+  frontend_api: ImproveResult | null;
+  frontend_ui: ImproveResult | null;
+  timestamp: string;
+};

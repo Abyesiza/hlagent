@@ -198,6 +198,16 @@ def request_improvement(body: ImproveRequestBody, c: ContainerDep) -> dict[str, 
     return result.model_dump()
 
 
+@router.post("/improve/fullstack", response_model=None)
+def request_fullstack_improvement(body: ImproveRequestBody, c: ContainerDep) -> dict[str, object]:
+    """
+    Full-stack improvement: applies backend change then updates agent-api.ts and AgentTester.tsx.
+    Returns a FullStackImproveResult with backend + frontend_api + frontend_ui sub-results.
+    """
+    result = c.orchestrator.improve_full_stack(body.instruction, body.target_file)
+    return result.model_dump()
+
+
 @router.get("/improve/history")
 def improvement_history(c: ContainerDep, limit: int = 20) -> dict[str, object]:
     history_file = c.settings.data_dir / "improvements.jsonl"

@@ -12,6 +12,7 @@ import {
   getOrCreateSessionId,
   postChat,
   refreshCodebase,
+  requestFullStackImprovement,
   requestImprovement,
   resetSessionId,
   startAgentJob,
@@ -20,6 +21,7 @@ import type {
   BlueprintSnapshot,
   ChatMessage,
   ChatTurnResult,
+  FullStackImproveResult,
   ImprovementHistory,
   ImproveResult,
 } from "@/lib/types";
@@ -203,6 +205,56 @@ function InlineImproveCard({ r }: { r: ImproveResult }) {
   );
 }
 
+// ─── full-stack improvement card (inline in chat) ────────────────────────────
+
+function InlineFullStackCard({ r }: { r: FullStackImproveResult }) {
+  const layers: { label: string; result: ImproveResult | null | undefined }[] = [
+    { label: "Backend", result: r.backend },
+    { label: "API client", result: r.frontend_api },
+    { label: "UI component", result: r.frontend_ui },
+  ];
+  return (
+    <div className={`mt-3 rounded-lg border text-xs ${
+      r.ok
+        ? "border-violet-300 bg-violet-50 dark:border-violet-700 dark:bg-violet-950/40"
+        : "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/40"
+    }`}>
+      <div className="flex items-center gap-2 border-b border-violet-200 px-3 py-2 dark:border-violet-800">
+        <span className={`font-bold ${r.ok ? "text-violet-600 dark:text-violet-400" : "text-red-500"}`}>
+          {r.ok ? "⚡ Full-stack applied" : "✗ Full-stack failed"}
+        </span>
+        <span className="ml-auto text-[10px] text-zinc-400">{new Date(r.timestamp).toLocaleTimeString()}</span>
+      </div>
+      <div className="divide-y divide-violet-100 dark:divide-violet-900">
+        {layers.map(({ label, result }) => {
+          if (!result) return null;
+          return (
+            <div key={label} className="flex items-start gap-2 px-3 py-2">
+              <span className={`shrink-0 w-20 font-semibold ${
+                result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"
+              }`}>
+                {result.ok ? "✓" : "✗"} {label}
+              </span>
+              <code className="rounded bg-white/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+                {result.target_file}
+              </code>
+              {result.committed && (
+                <span className="rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] text-blue-600 dark:bg-blue-900 dark:text-blue-300">
+                  {result.commit_hash?.slice(0, 8) ?? "committed"}
+                </span>
+              )}
+              {result.error && (
+                <span className="text-[10px] text-red-500">{result.error}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 // ─── sub-components ───────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: "done" | "partial" | "todo" }) {
@@ -284,8 +336,10 @@ export default function AgentTester() {
   // improve tab
   const [instruction, setInstruction] = useState("");
   const [targetFile, setTargetFile] = useState("");
+  const [fullStack, setFullStack] = useState(false);
   const [improving, setImproving] = useState(false);
   const [improveResult, setImproveResult] = useState<ImproveResult | null>(null);
+  const [fullStackResult, setFullStackResult] = useState<FullStackImproveResult | null>(null);
   const [improveHistory, setImproveHistory] = useState<ImprovementHistory>({ entries: [] });
 
   // status
@@ -440,17 +494,36 @@ export default function AgentTester() {
     const b = baseUrl || getAgentBaseUrl();
     setImproving(true);
     setImproveResult(null);
+    setFullStackResult(null);
     try {
-      const r = await requestImprovement(b, instr, targetFile.trim() || undefined);
-      setImproveResult(r);
-      void loadImprovements();
+      if (fullStack) {
+        const r = await requestFullStackImprovement(b, instr, targetFile.trim() || undefined);
+        setFullStackResult(r);
+        void loadImprovements();
+      } else {
+        const r = await requestImprovement(b, instr, targetFile.trim() || undefined);
+        setImproveResult(r);
+        void loadImprovements();
+      }
     } catch (e) {
-      setImproveResult({
-        ok: false, target_file: targetFile || "?", instruction: instr,
-        old_code: "", new_code: "", ast_ok: false, committed: false,
-        commit_hash: null, error: e instanceof Error ? e.message : "Request failed",
-        timestamp: new Date().toISOString(),
-      });
+      const errMsg = e instanceof Error ? e.message : "Request failed";
+      if (fullStack) {
+        setFullStackResult({
+          ok: false, instruction: instr,
+          backend: {
+            ok: false, target_file: "?", instruction: instr,
+            old_code: "", new_code: "", ast_ok: false, committed: false,
+            commit_hash: null, error: errMsg, timestamp: new Date().toISOString(),
+          },
+          frontend_api: null, frontend_ui: null, timestamp: new Date().toISOString(),
+        });
+      } else {
+        setImproveResult({
+          ok: false, target_file: targetFile || "?", instruction: instr,
+          old_code: "", new_code: "", ast_ok: false, committed: false,
+          commit_hash: null, error: errMsg, timestamp: new Date().toISOString(),
+        });
+      }
     } finally { setImproving(false); }
   };
 
@@ -630,6 +703,7 @@ export default function AgentTester() {
 
                 {messages.map(m => {
                   const improveData = m.turn?.metadata?.improve_result as ImproveResult | undefined;
+                  const fullStackData = m.turn?.metadata?.fullstack_result as FullStackImproveResult | undefined;
                   return (
                     <div
                       key={m.id}
@@ -669,8 +743,9 @@ export default function AgentTester() {
                             </div>
                           )}
                         </div>
-                        {/* inline code-change card */}
-                        {improveData && <InlineImproveCard r={improveData} />}
+                        {/* inline code-change cards */}
+                        {fullStackData && <InlineFullStackCard r={fullStackData} />}
+                        {!fullStackData && improveData && <InlineImproveCard r={improveData} />}
                       </div>
                     </div>
                   );
@@ -773,6 +848,33 @@ export default function AgentTester() {
                 spellCheck={false}
               />
 
+              {/* full-stack toggle */}
+              <div className="mb-4 flex items-start gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={fullStack}
+                  onClick={() => setFullStack(f => !f)}
+                  className="mt-0.5 flex shrink-0 items-center"
+                >
+                  <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                    fullStack ? "bg-violet-600" : "bg-zinc-300 dark:bg-zinc-600"
+                  }`}>
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                      fullStack ? "translate-x-4" : "translate-x-1"
+                    }`} />
+                  </span>
+                </button>
+                <div>
+                  <p className={`text-xs font-medium ${fullStack ? "text-violet-700 dark:text-violet-400" : "text-zinc-600 dark:text-zinc-400"}`}>
+                    Full-stack mode {fullStack ? "(ON)" : "(OFF)"}
+                  </p>
+                  <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-400">
+                    When ON: also updates <code className="font-mono">agent-api.ts</code> and <code className="font-mono">AgentTester.tsx</code> to expose the new feature in this UI.
+                  </p>
+                </div>
+              </div>
+
               <button
                 type="button"
                 disabled={improving || !instruction.trim()}
@@ -782,9 +884,9 @@ export default function AgentTester() {
                 {improving ? (
                   <span className="flex items-center gap-2">
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    Applying…
+                    {fullStack ? "Applying full-stack…" : "Applying…"}
                   </span>
-                ) : "Apply improvement"}
+                ) : fullStack ? "⚡ Apply (backend + frontend)" : "Apply improvement"}
               </button>
             </div>
 
@@ -826,6 +928,67 @@ export default function AgentTester() {
                     </pre>
                   </details>
                 )}
+              </div>
+            )}
+
+            {fullStackResult && (
+              <div className={`rounded-xl border p-5 ${
+                fullStackResult.ok
+                  ? "border-violet-200 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/30"
+                  : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
+              }`}>
+                <div className="mb-4 flex items-center gap-2">
+                  <span className={`text-sm font-bold ${fullStackResult.ok ? "text-violet-600 dark:text-violet-400" : "text-red-500"}`}>
+                    {fullStackResult.ok ? "⚡ Full-stack applied" : "✗ Full-stack failed"}
+                  </span>
+                  <span className="ml-auto text-[10px] text-zinc-400">{fmtTs(fullStackResult.timestamp)}</span>
+                </div>
+                <div className="space-y-3">
+                  {([
+                    { key: "backend" as const, label: "Backend", icon: "🐍" },
+                    { key: "frontend_api" as const, label: "API client (agent-api.ts)", icon: "🔌" },
+                    { key: "frontend_ui" as const, label: "UI component (AgentTester.tsx)", icon: "🖥" },
+                  ] as const).map(({ key, label, icon }) => {
+                    const sub = fullStackResult[key];
+                    if (!sub) return null;
+                    return (
+                      <div key={key} className={`rounded-lg border p-3 ${
+                        sub.ok
+                          ? "border-emerald-200 bg-white dark:border-emerald-800 dark:bg-zinc-900"
+                          : "border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/20"
+                      }`}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-base">{icon}</span>
+                          <span className={`text-xs font-semibold ${sub.ok ? "text-emerald-600" : "text-red-500"}`}>
+                            {sub.ok ? "✓" : "✗"} {label}
+                          </span>
+                          <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500 dark:bg-zinc-800">
+                            {sub.target_file}
+                          </code>
+                          {sub.committed && (
+                            <span className="rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[10px] text-blue-600 dark:bg-blue-900/40 dark:text-blue-300">
+                              {sub.commit_hash?.slice(0, 8)}
+                            </span>
+                          )}
+                          {sub.ast_ok && <span className="text-[10px] text-zinc-400">AST ✓</span>}
+                        </div>
+                        {sub.error && (
+                          <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">{sub.error}</p>
+                        )}
+                        {sub.new_code && sub.ok && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-[11px] text-zinc-400 hover:text-zinc-600">
+                              Show diff ({sub.new_code.split("\n").length} lines)
+                            </summary>
+                            <pre className="mt-1.5 max-h-48 overflow-auto rounded bg-zinc-950 px-3 py-2 font-mono text-[10px] text-emerald-300">
+                              {sub.new_code}
+                            </pre>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -961,6 +1124,7 @@ export default function AgentTester() {
                   ["GET",  "/api/v1/codebase/snapshot"],
                   ["POST", "/api/v1/codebase/refresh"],
                   ["POST", "/api/v1/improve"],
+                  ["POST", "/api/v1/improve/fullstack"],
                   ["GET",  "/api/v1/improve/history"],
                   ["POST", "/api/v1/research/trigger"],
                   ["GET",  "/api/v1/sica/summary"],
