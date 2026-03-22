@@ -773,7 +773,7 @@ export default function AgentTester() {
               {/* input bar */}
               <div className="border-t border-zinc-100 p-3 dark:border-zinc-800">
                 <textarea
-                  className="w-full resize-none rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-violet-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-violet-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:focus:border-violet-600"
+                  className="w-full resize-none rounded-xl border border-zinc-200 bg-zinc-900 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-violet-500"
                   rows={3}
                   value={input}
                   onChange={e => setInput(e.target.value)}

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import platform
 from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pathlib import Path
 
 from super_agent.app.api.deps import AppContainer
 from super_agent.app.domain.blueprint_status import BlueprintSnapshot, default_blueprint
@@ -280,3 +283,67 @@ def sica_summary(c: ContainerDep) -> dict[str, object]:
 def benchmark_history(c: ContainerDep, limit: int = 10) -> dict[str, object]:
     from super_agent.app.services.sica_loop import load_benchmark_history
     return {"entries": load_benchmark_history(c.settings.data_dir, limit)}
+
+
+# ── system info & filesystem access ───────────────────────────────────────────
+
+@router.get("/system/os")
+def get_os_info() -> dict[str, str]:
+    """
+    Returns information about the operating system where the agent is running.
+    """
+    return {
+        "system": platform.system(),
+        "release": platform.release(),
+        "version": platform.version(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "node_name": platform.node(),
+    }
+
+
+@router.get("/system/files")
+def list_files(
+    c: ContainerDep,
+    path: str = Query(..., description="The path to list, relative to the agent's data directory.")
+) -> dict[str, object]:
+    """
+    Lists files and directories within the agent's data directory.
+    Access is restricted to prevent directory traversal outside of the designated data directory.
+    """
+    base_dir = c.settings.data_dir
+    # Resolve the requested path to its canonical form
+    # and ensure it's within the allowed base_dir.
+    requested_path = (base_dir / path).resolve()
+
+    # Security check: Ensure the resolved path is a child of the resolved base_dir
+    try:
+        requested_path.relative_to(base_dir.resolve())
+    except ValueError:
+        return {"error": "Access denied: Path is outside the allowed data directory.", "path": str(requested_path)}
+
+    if not requested_path.exists():
+        return {"error": "Path not found.", "path": str(requested_path)}
+    if not requested_path.is_dir():
+        return {"error": "Path is not a directory. Only directories can be listed.", "path": str(requested_path)}
+
+    entries = []
+    try:
+        for entry in requested_path.iterdir():
+            entry_info = {
+                "name": entry.name,
+                "path": str(entry.relative_to(base_dir)), # Path relative to data_dir for consistency
+                "type": "directory" if entry.is_dir() else "file",
+                "size": entry.stat().st_size if entry.is_file() else None,
+                "mtime": entry.stat().st_mtime, # Modification time
+                "is_symlink": entry.is_symlink(),
+                "is_readable": os.access(entry, os.R_OK)
+            }
+            entries.append(entry_info)
+    except PermissionError:
+        return {"error": "Permission denied to list directory.", "path": str(requested_path)}
+    except Exception as e:
+        return {"error": f"An unexpected error occurred: {str(e)}", "path": str(requested_path)}
+
+    # Return the path relative to base_dir in the response
+    return {"current_path": str(requested_path.relative_to(base_dir)), "entries": entries}
