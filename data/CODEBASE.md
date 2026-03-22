@@ -155,24 +155,29 @@ nextjstester/       Next.js 16 frontend (local tester)
   def _extract_python()
   class SuperAgentOrchestrator — Connects workspace context → intent → SymPy or Gemini → HDC memory.
 
-**super_agent/app/services/research_loop.py** (103 lines) — Reads the user's persona from PERSONA.md.
+**super_agent/app/services/research_loop.py** (152 lines) — Performs proactive research. Each call advances through the HEARTBEAT.md
   def read_heartbeat_topics()
-  def read_persona() — Reads the user's persona from PERSONA.md.
-  def append_persona() — Appends or creates the user's persona in PERSONA.md.
+  def _read_cursor()
+  def _write_cursor()
+  def heartbeat_status()
+  def read_persona()
+  def append_persona()
   def append_memory()
-  def run_proactive_research() — Performs proactive research based on HEARTBEAT topics or, if none,
+  def read_memory()
+  def clear_memory()
+  def run_proactive_research() — Performs proactive research. Each call advances through the HEARTBEAT.md
 
 **super_agent/app/services/session_store.py** (102 lines) — In-memory sessions, optionally persisted to data/sessions/<id>.json.
   class Turn
   class Session
   class SessionStore — In-memory sessions, optionally persisted to data/sessions/<id>.json.
 
-**super_agent/app/services/sica_loop.py** (201 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
+**super_agent/app/services/sica_loop.py** (218 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
   def run_pytest_benchmark() — Run the test suite under `repo/tests/` and return a score dict.
   def _save_benchmark()
   def load_benchmark_history()
   def plan_improvements() — Build a real improvement plan from live blueprint gaps and benchmark score.
-  def sica_step() — Inner loop: write file → AST liveness → git commit → HDC vector → quantum pick.
+  def sica_step() — Inner loop: write file → AST liveness → git commit → HDC vector.
   def write_non_python_file() — Write any non-Python file and commit it.
   def run_outer_loop_summary() — Run benchmark → plan improvements → save history → return JSON summary.
 
@@ -191,7 +196,7 @@ nextjstester/       Next.js 16 frontend (local tester)
   class AppContainer
   def build_container()
 
-**super_agent/app/api/routes.py** (350 lines) — SSE endpoint: streams the agent response token-by-token.
+**super_agent/app/api/routes.py** (410 lines) — SSE endpoint: streams the agent response token-by-token.
   def get_container()
   def blueprint_status()
   def next_gaps()
@@ -215,10 +220,14 @@ nextjstester/       Next.js 16 frontend (local tester)
   class HeartbeatTopicsRequest
   def heartbeat_topics_get()
   def heartbeat_topics_set() — Replace the HEARTBEAT.md topic list.
+  def heartbeat_status_get()
+  def memory_read()
+  def memory_clear()
   def sica_summary()
   def benchmark_history()
   def get_os_info() — Returns information about the operating system where the agent is running.
   def list_files() — Lists files and directories within the agent's data directory.
+  def list_desktop_files() — Lists files and directories directly on the user's desktop.
 
 **super_agent/app/api/websocket_manager.py** (10 lines) — WebSocket session manager (stub for streaming agent / tool traces).
   class WebSocketManager
@@ -229,6 +238,6 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/__init__.py** (2 lines) — Application package.
 
-**super_agent/app/main.py** (54 lines)
+**super_agent/app/main.py** (56 lines)
   def lifespan()
   def health()
