@@ -693,11 +693,26 @@ class SuperAgentOrchestrator:
         prompt = hdc_hint + "\nUser:\n" + message if hdc_hint else message
         grounded = False
 
-        if _needs_search(message):
+        if _needs_search(message) and self._settings.use_google_search_grounding():
             text, grounded = self._gemini.generate_with_search(
                 prompt, model=self._settings.gemini_model_flash,
                 history=history, system_instruction=sys_instr,
             )
+        elif _needs_search(message):
+            # Vercel / short-timeout hosts: search tool + AFC often exceeds serverless limits → "failed to fetch"
+            meta["grounded"] = False
+            meta["search_skipped"] = "vercel_or_config"
+            extra = (
+                "\n\n[Runtime: live Google Search is disabled on this deployment to avoid timeouts. "
+                "Answer from training knowledge; state uncertainty for fast-changing topics "
+                "(politics, wars, prices, sports scores).]"
+            )
+            text = self._gemini.generate_text(
+                prompt + extra,
+                model=self._settings.gemini_model_flash,
+                history=history, system_instruction=sys_instr,
+            )
+            grounded = False
         else:
             text = self._gemini.generate_text(
                 prompt, model=self._settings.gemini_model_flash,

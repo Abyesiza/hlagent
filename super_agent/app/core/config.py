@@ -34,6 +34,14 @@ class Settings(BaseSettings):
         description="Comma-separated; tried after all keys are exhausted for the primary model",
     )
     enable_google_search: bool = Field(default=True)
+    google_search_on_vercel: bool = Field(
+        default=False,
+        description=(
+            "On Vercel (VERCEL=1), Google Search grounding is OFF by default because it is slow "
+            "(AFC + tool calls) and often exceeds serverless timeouts → browser 'failed to fetch'. "
+            "Set SUPER_AGENT_GOOGLE_SEARCH_ON_VERCEL=true to enable (use a plan with higher maxDuration)."
+        ),
+    )
 
     # ── paths & runtime ───────────────────────────────────────────────────────
     data_dir: Path = Field(default_factory=lambda: Path("data").resolve())
@@ -92,6 +100,14 @@ class Settings(BaseSettings):
                 seen.add(k)
                 out.append(k)
         return out
+
+    def use_google_search_grounding(self) -> bool:
+        """Whether to call Gemini with the Google Search tool (slow; often times out on Vercel)."""
+        if not self.enable_google_search:
+            return False
+        if os.environ.get("VERCEL", "").strip() == "1":
+            return bool(self.google_search_on_vercel)
+        return True
 
 
 @lru_cache
