@@ -21,7 +21,7 @@ export default function Home() {
           <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-400">
             <span className="hidden sm:block">FastAPI + Gemini + HDC + SymPy</span>
             <span className="rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono dark:border-zinc-800 dark:bg-zinc-900">
-              localhost:8000
+              env-driven API URL
             </span>
           </div>
         </div>

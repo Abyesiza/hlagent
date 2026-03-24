@@ -437,7 +437,7 @@ export default function AgentTester() {
     const v = next.trim().replace(/\/$/, "");
     setBaseUrl(v);
     try {
-      if (v && v !== "http://127.0.0.1:8000") localStorage.setItem(STORAGE_API, v);
+      if (v) localStorage.setItem(STORAGE_API, v);
       else localStorage.removeItem(STORAGE_API);
     } catch { /* ignore */ }
   };
@@ -584,7 +584,7 @@ export default function AgentTester() {
             className="w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 font-mono text-[11px] text-zinc-800 focus:outline-none focus:ring-1 focus:ring-violet-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
             value={baseUrl}
             onChange={e => persistBase(e.target.value)}
-            placeholder="http://127.0.0.1:8000"
+            placeholder="https://your-api-domain"
             spellCheck={false}
           />
         </div>
