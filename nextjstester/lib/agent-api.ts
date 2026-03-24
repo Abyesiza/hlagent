@@ -35,14 +35,49 @@ export function resetSessionId(): string {
   return id;
 }
 
-export async function fetchHealth(
-  base: string,
-): Promise<{ status: string; gemini_configured?: boolean } | null> {
+export type HealthCheck = {
+  ok: boolean;
+  gemini_configured?: boolean;
+  /** Shown in UI when ok is false (wrong URL, CORS, HTTP error, etc.) */
+  detail?: string;
+};
+
+/**
+ * GET /health on the FastAPI agent. Always returns a result so the UI can explain failures.
+ */
+export async function fetchHealth(base: string): Promise<HealthCheck> {
+  const url = (base || "").trim().replace(/\/$/, "");
+  if (!url) {
+    return {
+      ok: false,
+      detail:
+        "No API base URL. Set NEXT_PUBLIC_AGENT_API_URL in Vercel (Production) and redeploy, or paste your API URL in the sidebar.",
+    };
+  }
   try {
-    const r = await fetch(`${base}/health`, { cache: "no-store" });
-    if (!r.ok) return null;
-    return r.json();
-  } catch { return null; }
+    const r = await fetch(`${url}/health`, { cache: "no-store", mode: "cors" });
+    if (!r.ok) {
+      return {
+        ok: false,
+        detail: `HTTP ${r.status} from ${url}/health — check the API deployment URL.`,
+      };
+    }
+    const data = (await r.json()) as { status?: string; gemini_configured?: boolean };
+    const ok = data.status === "ok";
+    return {
+      ok,
+      gemini_configured: data.gemini_configured,
+      detail: ok
+        ? undefined
+        : `Unexpected health payload: ${JSON.stringify(data)}`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "fetch failed";
+    return {
+      ok: false,
+      detail: `${msg}. Common fixes: wrong URL, CORS (redeploy API with SUPER_AGENT_CORS_ORIGINS or default *.vercel.app regex), or calling http from an https page.`,
+    };
+  }
 }
 
 export async function fetchBlueprint(base: string): Promise<BlueprintSnapshot | null> {

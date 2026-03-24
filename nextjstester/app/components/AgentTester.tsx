@@ -328,9 +328,11 @@ export default function AgentTester() {
   const [tab, setTab] = useState<Tab>("chat");
 
   // health
-  const [health, setHealth] = useState<{ status: "ok" | "down" | "checking"; gemini: boolean }>({
-    status: "checking", gemini: false,
-  });
+  const [health, setHealth] = useState<{
+    status: "ok" | "down" | "checking";
+    gemini: boolean;
+    hint?: string;
+  }>({ status: "checking", gemini: false });
 
   // chat
   const [sessionId, setSessionId] = useState("");
@@ -381,14 +383,17 @@ export default function AgentTester() {
 
   // ── ping ──────────────────────────────────────────────────────────────────
   const ping = useCallback(async () => {
-    const b = baseUrl || getAgentBaseUrl();
-    setHealth(h => ({ ...h, status: "checking" }));
+    const b = (baseUrl || getAgentBaseUrl()).trim();
+    setHealth(h => ({ ...h, status: "checking", hint: undefined }));
     const h = await fetchHealth(b);
-    setHealth({ status: h?.status === "ok" ? "ok" : "down", gemini: h?.gemini_configured ?? false });
+    setHealth({
+      status: h.ok ? "ok" : "down",
+      gemini: h.gemini_configured ?? false,
+      hint: h.ok ? undefined : h.detail,
+    });
   }, [baseUrl]);
 
   useEffect(() => {
-    if (!baseUrl) return;
     void ping();
     const t = setInterval(() => void ping(), 20_000);
     return () => clearInterval(t);
@@ -563,6 +568,11 @@ export default function AgentTester() {
 
   const gaps = useMemo(() => blueprint?.items.filter(i => i.status !== "done") ?? [], [blueprint]);
 
+  const effectiveApiBase = useMemo(
+    () => (baseUrl || getAgentBaseUrl()).trim(),
+    [baseUrl],
+  );
+
   // ── tab config ────────────────────────────────────────────────────────────
   const TABS: { id: Tab; label: string; icon: string; badge?: number }[] = [
     { id: "chat",     label: "Chat",     icon: "💬" },
@@ -587,27 +597,37 @@ export default function AgentTester() {
             placeholder="https://your-api-domain"
             spellCheck={false}
           />
+          <p className="mt-1 break-all font-mono text-[9px] text-zinc-400" title={effectiveApiBase || "(empty)"}>
+            {effectiveApiBase ? `→ ${effectiveApiBase}` : "→ set URL or NEXT_PUBLIC_AGENT_API_URL"}
+          </p>
         </div>
 
         {/* health pill */}
-        <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${
-            health.status === "ok" ? "bg-emerald-500"
-            : health.status === "down" ? "bg-red-500"
-            : "animate-pulse bg-amber-400"
-          }`} />
-          <span className="text-xs text-zinc-500">
-            {health.status === "ok" ? "Online" : health.status === "down" ? "Offline" : "Checking…"}
-          </span>
-          <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            health.gemini
-              ? "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"
-              : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
-          }`}>
-            Gemini {health.gemini ? "✓" : "—"}
-          </span>
-          <button type="button" onClick={() => void ping()}
-            className="text-[11px] text-zinc-400 hover:text-zinc-600">↺</button>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${
+              health.status === "ok" ? "bg-emerald-500"
+              : health.status === "down" ? "bg-red-500"
+              : "animate-pulse bg-amber-400"
+            }`} />
+            <span className="text-xs text-zinc-500">
+              {health.status === "ok" ? "Online" : health.status === "down" ? "Offline" : "Checking…"}
+            </span>
+            <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              health.gemini
+                ? "bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300"
+                : "bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
+            }`}>
+              Gemini {health.gemini ? "✓" : "—"}
+            </span>
+            <button type="button" onClick={() => void ping()}
+              className="text-[11px] text-zinc-400 hover:text-zinc-600">↺</button>
+          </div>
+          {health.hint && (
+            <p className="text-[10px] leading-snug text-amber-700 dark:text-amber-400/90" title={health.hint}>
+              {health.hint.length > 220 ? `${health.hint.slice(0, 220)}…` : health.hint}
+            </p>
+          )}
         </div>
 
         {/* session */}

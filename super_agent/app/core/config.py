@@ -46,8 +46,8 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://127.0.0.1:3000",
     )
     cors_origin_regex: str = Field(
-        default="",
-        description="Optional regex for CORS origins, e.g. https://.*\\.vercel\\.app",
+        default=r"https://.*\.vercel\.app",
+        description="Regex for allowed browser origins (e.g. any *.vercel.app frontend). Set empty to disable.",
     )
 
     # ── validators ────────────────────────────────────────────────────────────
