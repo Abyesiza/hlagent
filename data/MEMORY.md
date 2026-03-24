@@ -93,3 +93,23 @@ As of March 22, 2026, Neuro-symbolic AI (NeSy AI) and Vector Symbolic Architectu
 *   **Vector Symbolic Architectures for Robust Representation:** VSAs (also known as Hyperdimensional Computing or HDC) represent symbols and structured data as fixed-length, high-dimensional vectors, offering efficient symbolic processing, noise robustness, and similarity-preserving properties.
 *   **Energy Efficiency Gains:** Neuro-symbolic systems, particularly those incorporating VSAs, are demonstrating significant energy efficiency, with proof-of-concept models using substantially less energy for training and execution compared to traditional deep learning models.
 *   **Neuro-Vector-Symbolic Architectures (NVSAs) and Hardware Acceleration:** The compatibility of VSAs with neural networks is leading to Neuro-Vector-Symbolic Architectures (NVSAs) that enable sophisticated probabilistic reasoning. These architectures are well-suited for efficient implementation on emerging brain-inspired hardware, including neuromorphic computing, which is a key area of research and development.
+
+## Research: FastAPI async performance patterns and best practices
+*2026-03-24 15:44 UTC*
+
+The current date is Tuesday, March 24, 2026.
+
+Here is a concise summary of FastAPI async performance patterns and best practices, focusing on practical and actionable insights relevant to building AI systems:
+
+*   **Distinguish I/O-bound from CPU-bound tasks**: FastAPI's asynchronous nature (using `async def` and `await`) excels at handling I/O-bound operations (e.g., database queries, external API calls to LLMs, network requests). For CPU-bound tasks (e.g., heavy machine learning inference, data processing), `async def` alone is not sufficient and will block the event loop, impacting performance.
+*   **Leverage Gunicorn with Uvicorn for Production**: For optimal production deployment, use Gunicorn as a process manager to manage multiple Uvicorn worker processes. The `UvicornWorker` class is recommended for async FastAPI applications. The number of workers should be tuned based on workload characteristics; a common starting point is 2-4 workers per CPU core for I/O-bound tasks and 1 worker per core for CPU-heavy tasks.
+*   **Offload CPU-Bound Work Effectively**:
+    *   **Thread Pools**: For CPU-intensive operations that must run within the API, use `loop.run_in_executor` (often with `ThreadPoolExecutor`) to move them to background threads, preventing the main event loop from blocking.
+    *   **Job Queues**: For long-running or critical CPU-bound tasks, employ dedicated asynchronous job queues like Celery (with Redis/RabbitMQ) for robust background processing, decoupled from the API's request-response cycle.
+    *   **External Inference Services**: For large-scale AI model serving, especially LLMs, consider externalizing inference to specialized services (e.g., vLLM). FastAPI can then act as a lightweight, I/O-bound API gateway, handling requests and passing them to the optimized inference service.
+*   **Utilize Fast Path Optimizations**: Ensure Uvicorn is configured to use high-performance event loop and HTTP parser implementations by installing `uvloop` and `httptools`. This provides more stable CPU usage and lower overhead per request.
+*   **Implement FastAPI Background Tasks for Post-Response Operations**: Use FastAPI's `BackgroundTasks` for lightweight operations that can execute after the HTTP response has been sent to the client (e.g., sending email notifications, logging, minor post-processing). Be aware that these still run in the same event loop or thread as the request.
+*   **Use Asynchronous Libraries for I/O**: To maximize FastAPI's async benefits, consistently use async-native libraries for all I/O-bound tasks, such as `asyncpg` for PostgreSQL databases and `httpx` or `aiohttp` for making external HTTP requests.
+*   **Optimize AI Model Loading**: For AI model serving, load models once at application startup (e.g., using FastAPI's `lifespan` event or global variables) rather than per-request, to minimize latency on initial inference requests.
+*   **Manage Resources and Concurrency**: Implement connection pooling for database and HTTP clients to reduce overhead. Employ `asyncio.Semaphore` to control the number of concurrent requests to external services, preventing rate limiting or overwhelming upstream systems.
+*   **Monitor and Tune Continuously**: Regularly monitor API performance metrics such as response times, error rates, and event loop health. Conduct load testing with realistic traffic profiles and profile your application to pinpoint and address bottlenecks effectively.

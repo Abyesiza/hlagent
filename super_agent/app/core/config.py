@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     cors_origins: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
     )
+    cors_origin_regex: str = Field(
+        default="",
+        description="Optional regex for CORS origins, e.g. https://.*\\.vercel\\.app",
+    )
 
     # ── validators ────────────────────────────────────────────────────────────
     @field_validator(
