@@ -546,6 +546,7 @@ export default function AgentTester() {
             ok: false, target_file: "?", instruction: instr,
             old_code: "", new_code: "", ast_ok: false, committed: false,
             commit_hash: null, error: errMsg, timestamp: new Date().toISOString(),
+            file_changes: [],
           },
           frontend_api: null, frontend_ui: null, timestamp: new Date().toISOString(),
         });
@@ -554,6 +555,7 @@ export default function AgentTester() {
           ok: false, target_file: targetFile || "?", instruction: instr,
           old_code: "", new_code: "", ast_ok: false, committed: false,
           commit_hash: null, error: errMsg, timestamp: new Date().toISOString(),
+          file_changes: [],
         });
       }
     } finally { setImproving(false); }
