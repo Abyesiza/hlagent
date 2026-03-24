@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-torchhd = ["torch>=2.2.0", "torchhd>=5.7.0"]
+torchhd = ["torch>=2.2.0", "torch-hd>=5.7.1"]
 arq = ["arq>=0.26.0", "redis>=5.0.0"]
 dev = ["pytest>=8.0.0"]
 
