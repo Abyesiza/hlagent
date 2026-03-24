@@ -82,6 +82,23 @@ class Settings(BaseSettings):
                 return self.model_copy(update={"gemini_api_key": plain})
         return self
 
+    @model_validator(mode="after")
+    def _vercel_writable_data_dir(self) -> "Settings":
+        """
+        Vercel serverless: /var/task is read-only. HDC, sessions, MEMORY.md, etc. must use /tmp.
+        Override with SUPER_AGENT_DATA_DIR=/path (must be writable).
+        """
+        if os.environ.get("VERCEL", "").strip() != "1":
+            return self
+        raw = os.environ.get("SUPER_AGENT_DATA_DIR", "").strip()
+        base = Path(raw) if raw else Path("/tmp/hlagent-data")
+        base.mkdir(parents=True, exist_ok=True)
+        sandbox = base / "sandbox"
+        sandbox.mkdir(parents=True, exist_ok=True)
+        return self.model_copy(
+            update={"data_dir": base.resolve(), "sandbox_dir": sandbox.resolve()},
+        )
+
     # ── helpers ───────────────────────────────────────────────────────────────
     def all_api_keys(self) -> list[str]:
         """Return all distinct, non-empty API keys in priority order."""
