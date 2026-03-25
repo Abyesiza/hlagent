@@ -210,6 +210,99 @@ export async function fetchSicaSummary(base: string): Promise<string> {
   } catch { return ""; }
 }
 
+export type SicaStatus = {
+  benchmark: {
+    score: number;
+    passed: number;
+    failed: number;
+    errors: number;
+    total: number;
+    output?: string;
+    timestamp?: string;
+  };
+  plan: {
+    score: number;
+    priority_dimension: string;
+    gaps: { id: string; title: string; status: string; notes: string }[];
+    todos: { id: string; task: string; priority: number; notes: string }[];
+  };
+  history: { score: number; passed: number; failed: number; timestamp: string }[];
+  recent_commits: { hash: string; subject: string; date: string }[];
+};
+
+export async function fetchSicaStatus(base: string): Promise<SicaStatus | null> {
+  try {
+    const r = await fetch(`${base}/api/v1/sica/status`, { cache: "no-store" });
+    if (!r.ok) return null;
+    return r.json() as Promise<SicaStatus>;
+  } catch { return null; }
+}
+
+export type SicaCycleResult = {
+  status: string;
+  gap?: { id: string; task: string };
+  score_delta?: number;
+  reverted?: boolean;
+  message?: string;
+};
+
+export async function runSicaCycle(base: string, gapId?: string): Promise<{ job_id: string }> {
+  const r = await fetch(`${base}/api/v1/sica/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ gap_id: gapId ?? null }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error((data as { detail?: string }).detail ?? `HTTP ${r.status}`);
+  return data as { job_id: string };
+}
+
+export type AgentJobSummary = {
+  job_id: string;
+  job_type: string;
+  prompt: string;
+  phase: string;
+  error?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  improve_result?: Record<string, unknown> | null;
+  turn_route?: string | null;
+};
+
+export async function listJobs(base: string, limit = 20): Promise<AgentJobSummary[]> {
+  try {
+    const r = await fetch(`${base}/api/v1/jobs?limit=${limit}`, { cache: "no-store" });
+    if (!r.ok) return [];
+    const d = (await r.json()) as { jobs: AgentJobSummary[] };
+    return d.jobs ?? [];
+  } catch { return []; }
+}
+
+export async function getJob(base: string, jobId: string): Promise<AgentJobSummary | null> {
+  try {
+    const r = await fetch(`${base}/api/v1/jobs/${jobId}`, { cache: "no-store" });
+    if (!r.ok) return null;
+    return r.json() as Promise<AgentJobSummary>;
+  } catch { return null; }
+}
+
+export async function runSandbox(base: string, code: string, timeout = 15): Promise<{
+  returncode: number;
+  stdout: string;
+  stderr: string;
+  backend: string;
+  timed_out: boolean;
+}> {
+  const r = await fetch(`${base}/api/v1/sandbox/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, timeout }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error((data as { detail?: string }).detail ?? `HTTP ${r.status}`);
+  return data as { returncode: number; stdout: string; stderr: string; backend: string; timed_out: boolean };
+}
+
 export async function fetchHeartbeatStatus(base: string): Promise<HeartbeatStatus | null> {
   try {
     const r = await fetch(`${base}/api/v1/heartbeat/status`, { cache: "no-store" });

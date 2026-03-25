@@ -53,6 +53,24 @@ class Settings(BaseSettings):
     heartbeat_interval_seconds: int = Field(default=300)
     agent_loop_timeout_seconds: float = Field(default=3600.0)
 
+    # ── SICA auto-patch ───────────────────────────────────────────────────────
+    sica_auto_patch_enabled: bool = Field(
+        default=False,
+        description=(
+            "When True, the heartbeat scheduler runs a SICA improvement cycle "
+            "every sica_auto_patch_interval_hours, picking the top blueprint gap, "
+            "applying a code change, running tests, and rolling back if they regress."
+        ),
+    )
+    sica_auto_patch_interval_hours: float = Field(
+        default=24.0,
+        description="How often the automatic SICA patch cycle runs (in hours).",
+    )
+    sica_regression_threshold: float = Field(
+        default=0.10,
+        description="Roll back an improvement if test pass-rate drops by more than this fraction.",
+    )
+
     convex_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices(

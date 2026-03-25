@@ -17,19 +17,24 @@ import {
   fetchHeartbeatStatus,
   fetchImprovements,
   fetchResearchMemory,
+  fetchSicaStatus,
   fetchSicaSummary,
   getAgentBaseUrl,
   getAgentJob,
   getOrCreateSessionId,
+  listJobs,
   postChat,
   refreshCodebase,
   requestFullStackImprovement,
   requestImprovement,
   resetSessionId,
+  runSandbox,
+  runSicaCycle,
   setHeartbeatTopics,
   startAgentJob,
   triggerResearch,
 } from "@/lib/agent-api";
+import type { AgentJobSummary, SicaStatus } from "@/lib/agent-api";
 import type {
   BlueprintSnapshot,
   ChatMessage,
@@ -296,6 +301,14 @@ export default function AgentTester(){
 
   const [blueprint,setBlueprint]=useState<BlueprintSnapshot|null>(null);
   const [sica,setSica]=useState("");
+  const [sicaStatus,setSicaStatus]=useState<SicaStatus|null>(null);
+  const [sicaRunning,setSicaRunning]=useState(false);
+  const [sicaJobId,setSicaJobId]=useState<string|null>(null);
+  const [jobs,setJobs]=useState<AgentJobSummary[]>([]);
+
+  const [sandboxCode,setSandboxCode]=useState("");
+  const [sandboxRunning,setSandboxRunning]=useState(false);
+  const [sandboxResult,setSandboxResult]=useState<{stdout:string;stderr:string;returncode:number;timed_out:boolean}|null>(null);
 
   const [memory,setMemory]=useState("");
   const [memoryLoading,setMemoryLoading]=useState(false);
@@ -346,8 +359,14 @@ export default function AgentTester(){
 
   const loadStatus=useCallback(async()=>{
     const b=baseUrl||getAgentBaseUrl();
-    const [bp,sc]=await Promise.all([fetchBlueprint(b),fetchSicaSummary(b)]);
+    const [bp,sc,ss,jbs]=await Promise.all([
+      fetchBlueprint(b),
+      fetchSicaSummary(b),
+      fetchSicaStatus(b),
+      listJobs(b,20),
+    ]);
     setBlueprint(bp);setSica(sc);
+    setSicaStatus(ss);setJobs(jbs);
   },[baseUrl]);
 
   const loadImprovements=useCallback(async()=>{
@@ -865,6 +884,68 @@ export default function AgentTester(){
                 {improveResult && <ImproveResultCard r={improveResult}/>}
                 {fullStackResult && <FullStackResultCard r={fullStackResult}/>}
 
+                {/* Sandbox */}
+                <div className="rounded-2xl p-5" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
+                  <div className="mb-4 flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl"
+                      style={{background:"var(--amber)22",border:"1px solid var(--amber)44"}}>⬡</div>
+                    <div>
+                      <h3 className="font-bold text-base" style={{color:"var(--txt)"}}>Python Sandbox</h3>
+                      <p className="mt-0.5 text-xs" style={{color:"var(--txt-3)"}}>
+                        Run arbitrary Python against the agent's runtime. No network block — use to verify logic before requesting an improvement.
+                      </p>
+                    </div>
+                  </div>
+                  <textarea
+                    className="mb-3 w-full resize-none rounded-xl px-4 py-3 font-mono text-xs outline-none transition"
+                    style={{background:"var(--elevated)",color:"var(--txt)",border:"1px solid var(--border)",minHeight:"96px"}}
+                    rows={5} value={sandboxCode} onChange={e=>setSandboxCode(e.target.value)}
+                    placeholder={"# Quick sanity check\nfrom super_agent.app.domain.blueprint_status import default_blueprint\nbp = default_blueprint()\nprint(len(list(bp.next_gaps())), 'gaps open')"}
+                  />
+                  <button type="button" disabled={sandboxRunning||!sandboxCode.trim()}
+                    onClick={async()=>{
+                      setSandboxRunning(true);setSandboxResult(null);
+                      try{
+                        const r=await runSandbox(baseUrl||getAgentBaseUrl(),sandboxCode);
+                        setSandboxResult(r);
+                      }catch(e){ setSandboxResult({stdout:"",stderr:String(e),returncode:1,timed_out:false}); }
+                      finally{setSandboxRunning(false);}
+                    }}
+                    className="rounded-xl px-6 py-2 text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-40"
+                    style={{background:"linear-gradient(135deg,var(--amber),var(--teal))",color:"#000"}}>
+                    {sandboxRunning
+                      ? <span className="flex items-center gap-2">
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-black border-t-transparent"/>Running…
+                        </span>
+                      : "▶ Run"}
+                  </button>
+                  {sandboxResult && (
+                    <div className="mt-4 rounded-xl overflow-hidden" style={{border:"1px solid var(--border-dim)"}}>
+                      <div className="flex items-center gap-2 px-3 py-2"
+                        style={{background:"var(--elevated)",borderBottom:"1px solid var(--border-dim)"}}>
+                        <span className="font-mono text-[10px] font-bold"
+                          style={{color:sandboxResult.returncode===0?"var(--teal)":"var(--red)"}}>
+                          exit {sandboxResult.returncode}
+                        </span>
+                        {sandboxResult.timed_out && <span className="text-[10px]" style={{color:"var(--amber)"}}>timed out</span>}
+                        <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>{sandboxResult.returncode===0?"✓ ok":"✗ error"}</span>
+                      </div>
+                      {sandboxResult.stdout && (
+                        <pre className="px-3 py-2.5 font-mono text-[11px] whitespace-pre-wrap"
+                          style={{background:"var(--card)",color:"var(--teal)",maxHeight:"200px",overflowY:"auto"}}>
+                          {sandboxResult.stdout}
+                        </pre>
+                      )}
+                      {sandboxResult.stderr && (
+                        <pre className="px-3 py-2.5 font-mono text-[11px] whitespace-pre-wrap"
+                          style={{background:"var(--card)",color:"var(--red)",maxHeight:"200px",overflowY:"auto",borderTop:"1px solid var(--border-dim)"}}>
+                          {sandboxResult.stderr}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {improveHistory.entries.length>0 && (
                   <div>
                     <h3 className="mb-3 text-sm font-bold" style={{color:"var(--txt)"}}>
@@ -987,13 +1068,160 @@ export default function AgentTester(){
                   )}
                 </div>
 
-                {sica && (
-                  <div className="rounded-2xl p-4" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                    <p className="mb-2 font-bold text-sm" style={{color:"var(--txt)"}}>SICA loop summary</p>
-                    <pre className="rounded-xl p-3 font-mono text-[11px]"
-                      style={{background:"var(--card)",color:"var(--txt-2)"}}>
-                      {sica}
-                    </pre>
+                {/* SICA live panel */}
+                <div className="rounded-2xl overflow-hidden"
+                  style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
+                  <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
+                    <span className="text-base">⚙</span>
+                    <p className="font-bold text-sm" style={{color:"var(--txt)"}}>SICA — Self-Improvement Cycle</p>
+                    {sicaStatus && (
+                      <div className="ml-2 flex gap-3 text-xs">
+                        <span style={{color:"var(--cyan)"}}>score {(sicaStatus.benchmark.score*100).toFixed(0)}%</span>
+                        <span style={{color:"var(--amber)"}}>{sicaStatus.plan.todos.length} gaps</span>
+                      </div>
+                    )}
+                    <button type="button" disabled={sicaRunning} onClick={async()=>{
+                      setSicaRunning(true);
+                      try {
+                        const res=await runSicaCycle(baseUrl||getAgentBaseUrl());
+                        setSicaJobId(res.job_id);
+                        // poll until done
+                        const b=baseUrl||getAgentBaseUrl();
+                        const tick=setInterval(async()=>{
+                          const jbs=await listJobs(b,20);
+                          setJobs(jbs);
+                          const j=jbs.find(j=>j.job_id===res.job_id);
+                          if(!j||j.phase==="COMPLETE"||j.phase==="complete"){
+                            clearInterval(tick);setSicaRunning(false);
+                            await loadStatus();
+                          }
+                        },3000);
+                      } catch(e){
+                        console.error(e);setSicaRunning(false);
+                      }
+                    }}
+                      className="ml-auto flex items-center gap-1.5 rounded-xl px-4 py-1.5 text-xs font-bold transition hover:scale-[1.02] disabled:opacity-40"
+                      style={{background:"linear-gradient(135deg,var(--violet),var(--blue))",color:"#000"}}>
+                      {sicaRunning
+                        ? <><span className="h-3 w-3 animate-spin rounded-full border-2 border-black border-t-transparent"/>Running…</>
+                        : "▶ Run cycle"}
+                    </button>
+                  </div>
+                  {sicaJobId && (
+                    <div className="px-4 py-2 text-[10px] font-mono" style={{color:"var(--txt-3)",borderBottom:"1px solid var(--border-dim)"}}>
+                      job {sicaJobId.slice(0,20)}… {sicaRunning?"· running":"· done"}
+                    </div>
+                  )}
+                  {sicaStatus ? (
+                    <div className="p-4 flex flex-col gap-4">
+                      {/* benchmark bar */}
+                      <div>
+                        <div className="flex justify-between mb-1.5 text-xs">
+                          <span style={{color:"var(--txt-3)"}}>Test pass rate</span>
+                          <span style={{color:"var(--cyan)",fontWeight:700}}>{sicaStatus.benchmark.passed}/{sicaStatus.benchmark.total} ({(sicaStatus.benchmark.score*100).toFixed(0)}%)</span>
+                        </div>
+                        <div className="h-2 rounded-full overflow-hidden" style={{background:"var(--elevated)"}}>
+                          <div className="h-full rounded-full transition-all"
+                            style={{width:`${(sicaStatus.benchmark.score*100).toFixed(0)}%`,
+                              background:`linear-gradient(90deg,var(--cyan),var(--blue))`}}/>
+                        </div>
+                      </div>
+                      {/* priority gaps */}
+                      {sicaStatus.plan.todos.length>0 && (
+                        <div>
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Next gaps to patch</p>
+                          <div className="flex flex-col gap-1.5">
+                            {sicaStatus.plan.todos.slice(0,5).map(t=>(
+                              <div key={t.id} className="flex items-start gap-3 rounded-xl px-3 py-2.5"
+                                style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
+                                <span className="mt-0.5 shrink-0 h-4 w-4 rounded flex items-center justify-center text-[9px] font-bold"
+                                  style={{background:"var(--violet)22",color:"var(--violet)",border:"1px solid var(--violet)44"}}>
+                                  {t.priority}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium truncate" style={{color:"var(--txt)"}}>{t.task}</p>
+                                  {t.notes && <p className="text-[10px] mt-0.5 truncate" style={{color:"var(--txt-3)"}}>{t.notes}</p>}
+                                </div>
+                                <button type="button" disabled={sicaRunning}
+                                  onClick={async()=>{
+                                    setSicaRunning(true);
+                                    try{
+                                      const res=await runSicaCycle(baseUrl||getAgentBaseUrl(),t.id);
+                                      setSicaJobId(res.job_id);
+                                      const b=baseUrl||getAgentBaseUrl();
+                                      const tick=setInterval(async()=>{
+                                        const jbs=await listJobs(b,20);setJobs(jbs);
+                                        const j=jbs.find(j=>j.job_id===res.job_id);
+                                        if(!j||j.phase==="COMPLETE"||j.phase==="complete"){
+                                          clearInterval(tick);setSicaRunning(false);await loadStatus();
+                                        }
+                                      },3000);
+                                    }catch(e){console.error(e);setSicaRunning(false);}
+                                  }}
+                                  className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold transition hover:opacity-80 disabled:opacity-40"
+                                  style={{background:"var(--violet)22",color:"var(--violet)",border:"1px solid var(--violet)44"}}>
+                                  Fix
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {/* recent commits */}
+                      {sicaStatus.recent_commits.length>0 && (
+                        <div>
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Recent commits</p>
+                          <div className="flex flex-col gap-1">
+                            {sicaStatus.recent_commits.map(c=>(
+                              <div key={c.hash} className="flex items-center gap-2 rounded-lg px-3 py-1.5"
+                                style={{background:"var(--card)"}}>
+                                <code className="shrink-0 font-mono text-[10px]" style={{color:"var(--blue)"}}>{c.hash.slice(0,7)}</code>
+                                <span className="truncate text-[11px]" style={{color:"var(--txt-2)"}}>{c.subject}</span>
+                                <span className="shrink-0 text-[9px] ml-auto" style={{color:"var(--txt-3)"}}>{c.date.slice(0,10)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="px-4 py-5 text-sm" style={{color:"var(--txt-3)"}}>
+                      {sica||"Click ↺ to load SICA status."}
+                    </p>
+                  )}
+                </div>
+
+                {/* recent jobs */}
+                {jobs.length>0 && (
+                  <div className="rounded-2xl overflow-hidden" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
+                    <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
+                      <span className="text-base">⟳</span>
+                      <p className="font-bold text-sm" style={{color:"var(--txt)"}}>Recent Jobs</p>
+                      <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>{jobs.length} total</span>
+                    </div>
+                    <div className="divide-y" style={{borderColor:"var(--border-dim)"}}>
+                      {jobs.slice(0,8).map(j=>(
+                        <div key={j.job_id} className="px-4 py-2.5 flex items-start gap-3">
+                          <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold mt-0.5 uppercase"
+                            style={{
+                              background:j.job_type==="sica"?"var(--violet)22":j.job_type==="improve"?"var(--amber)22":"var(--blue)22",
+                              color:j.job_type==="sica"?"var(--violet)":j.job_type==="improve"?"var(--amber)":"var(--blue)",
+                            }}>{j.job_type}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs truncate" style={{color:"var(--txt)"}}>{j.prompt}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[9px] font-semibold uppercase" style={{
+                                color:j.phase==="COMPLETE"||j.phase==="complete"
+                                  ?(j.error?"var(--red)":"var(--teal)")
+                                  :"var(--amber)",
+                              }}>{j.phase}</span>
+                              {j.error && <span className="text-[9px]" style={{color:"var(--red)"}}>{j.error.slice(0,60)}</span>}
+                              <span className="ml-auto text-[9px]" style={{color:"var(--txt-3)"}}>{j.started_at?.slice(0,16).replace("T"," ")}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -1007,9 +1235,13 @@ export default function AgentTester(){
                       ["GET","/api/v1/agent/jobs/:id"],["POST","/api/v1/sympy/run"],
                       ["POST","/api/v1/route-intent"],["GET","/api/v1/codebase/snapshot"],
                       ["POST","/api/v1/codebase/refresh"],["POST","/api/v1/improve"],
-                      ["POST","/api/v1/improve/fullstack"],["GET","/api/v1/improve/history"],
+                      ["POST","/api/v1/improve/fullstack"],["POST","/api/v1/improve/async"],
+                      ["GET","/api/v1/improve/history"],
+                      ["POST","/api/v1/sica/run"],["POST","/api/v1/sica/gap"],
+                      ["GET","/api/v1/sica/status"],["GET","/api/v1/sica/summary"],
+                      ["GET","/api/v1/jobs"],["GET","/api/v1/jobs/:id"],
                       ["POST","/api/v1/research/trigger"],["GET","/api/v1/heartbeat/status"],
-                      ["POST","/api/v1/notify/test"],
+                      ["POST","/api/v1/sandbox/run"],["POST","/api/v1/notify/test"],
                     ] as [string,string][]).map(([method,path])=>(
                       <div key={path} className="flex items-center gap-2 rounded-xl px-3 py-2"
                         style={{background:"var(--card)"}}>

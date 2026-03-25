@@ -19,6 +19,7 @@ def attach_heartbeat(
     settings: "Settings",
     gemini: "GeminiClient",
     convex_store: "ConvexAgentStore | None" = None,
+    orchestrator: "object | None" = None,
 ) -> None:
     from super_agent.app.services import research_loop
 
@@ -57,3 +58,35 @@ def attach_heartbeat(
         id="heartbeat_research",
         replace_existing=True,
     )
+
+    # ── optional SICA auto-patch ──────────────────────────────────────────────
+    if settings.sica_auto_patch_enabled and orchestrator is not None:
+
+        async def sica_tick() -> None:
+            from super_agent.app.services.sica_loop import run_improvement_cycle
+
+            logger.info("SICA auto-patch: starting cycle")
+            try:
+                cycle = run_improvement_cycle(
+                    orchestrator,
+                    settings.data_dir,
+                    convex=convex_store,
+                )
+                logger.info(
+                    "SICA auto-patch: status=%s score_delta=%s reverted=%s",
+                    cycle.get("status"), cycle.get("score_delta"), cycle.get("reverted"),
+                )
+            except Exception:
+                logger.exception("SICA auto-patch tick failed")
+
+        interval_seconds = max(3600, int(settings.sica_auto_patch_interval_hours * 3600))
+        scheduler.add_job(
+            sica_tick,
+            IntervalTrigger(seconds=interval_seconds),
+            id="sica_auto_patch",
+            replace_existing=True,
+        )
+        logger.info(
+            "SICA auto-patch enabled — interval %sh",
+            settings.sica_auto_patch_interval_hours,
+        )

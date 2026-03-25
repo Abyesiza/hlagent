@@ -6,7 +6,7 @@ import logging
 import os
 import platform
 from concurrent.futures import ThreadPoolExecutor
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Query
 from fastapi.responses import StreamingResponse
@@ -124,6 +124,48 @@ def get_job(job_id: str, c: ContainerDep) -> dict[str, object]:
         "result": job.turn.model_dump() if job.turn else None,
         "error": job.error,
     }
+
+
+# ── agent location ────────────────────────────────────────────────────────────
+
+class LocationData(BaseModel):
+    latitude: float
+    longitude: float
+    timestamp: float | None = None # Unix timestamp (e.g., from browser Geolocation API)
+    accuracy: float | None = None # Accuracy of latitude/longitude, in meters
+    heading: float | None = None # Direction of travel, in degrees (0-360)
+    speed: float | None = None # Speed over ground, in meters per second
+
+
+@router.post("/agent/location")
+def set_agent_location(body: LocationData, c: ContainerDep) -> dict[str, str]:
+    """
+    Sets the agent's current geographical location.
+    This information can be provided by a client-side (e.g., browser) geolocation API.
+    """
+    c.orchestrator.set_agent_location(
+        latitude=body.latitude,
+        longitude=body.longitude,
+        timestamp=body.timestamp,
+        accuracy=body.accuracy,
+        heading=body.heading,
+        speed=body.speed,
+    )
+    return {"status": "ok", "message": "Agent location updated successfully."}
+
+
+@router.get("/agent/location", response_model=LocationData)
+def get_agent_location(c: ContainerDep) -> LocationData:
+    """
+    Retrieves the agent's last known geographical location.
+    Returns a 404 if the location has not been set yet.
+    """
+    location_dict = c.orchestrator.get_agent_location()
+    if location_dict:
+        return LocationData(**location_dict)
+    
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="Agent location not set.")
 
 
 # ── symbolic math ─────────────────────────────────────────────────────────────
@@ -355,6 +397,10 @@ def agent_tasks_recent(c: ContainerDep, limit: int = Query(default=50, ge=1, le=
 
 # ── SICA ─────────────────────────────────────────────────────────────────────
 
+class SicaGapRequest(BaseModel):
+    gap_id: str | None = None
+
+
 @router.get("/sica/summary")
 def sica_summary(c: ContainerDep) -> dict[str, object]:
     from super_agent.app.services import sica_loop
@@ -370,10 +416,96 @@ def sica_summary(c: ContainerDep) -> dict[str, object]:
     return {"summary": summary_json, "quantum_score": q_score}
 
 
+@router.post("/sica/run")
+def sica_run_cycle(body: SicaGapRequest, c: ContainerDep) -> dict[str, object]:
+    """
+    Kick off a full SICA improvement cycle in the background.
+    Returns a job_id immediately — poll GET /api/v1/jobs/{job_id} for results.
+    """
+    job_id = c.agent_loop.start_sica_cycle(gap_id=body.gap_id)
+    return {"job_id": job_id, "status": "started", "gap_id": body.gap_id}
+
+
+@router.post("/sica/gap")
+def sica_apply_gap(body: ImproveRequestBody, c: ContainerDep) -> dict[str, object]:
+    """
+    Apply an improvement for a specific instruction, with benchmark verify + rollback.
+    Runs synchronously (blocks until done).
+    """
+    from super_agent.app.services.sica_loop import run_improvement_cycle
+
+    convex = getattr(c, "convex_store", None)
+    result = run_improvement_cycle(
+        c.orchestrator,
+        c.settings.data_dir,
+        gap_id=None,
+        convex=convex,
+    )
+    return result
+
+
+@router.get("/sica/status")
+def sica_status(c: ContainerDep) -> dict[str, object]:
+    """
+    Current SICA state: blueprint gaps, latest benchmark score, recent cycle history.
+    """
+    from super_agent.app.services.sica_loop import (
+        run_pytest_benchmark,
+        plan_improvements,
+        load_benchmark_history,
+    )
+    from super_agent.app.infrastructure.git_safe import git_log
+
+    repo = c.settings.data_dir.parent
+    bench = run_pytest_benchmark(repo)
+    plan = plan_improvements(bench)
+    history = load_benchmark_history(c.settings.data_dir, limit=5)
+    commits = git_log(repo, limit=5)
+
+    return {
+        "benchmark": bench,
+        "plan": plan,
+        "history": history,
+        "recent_commits": commits,
+    }
+
+
 @router.get("/benchmark/history")
 def benchmark_history(c: ContainerDep, limit: int = 10) -> dict[str, object]:
     from super_agent.app.services.sica_loop import load_benchmark_history
     return {"entries": load_benchmark_history(c.settings.data_dir, limit)}
+
+
+# ── jobs ──────────────────────────────────────────────────────────────────────
+
+@router.get("/jobs")
+def list_jobs(c: ContainerDep, limit: int = 20) -> dict[str, object]:
+    """List recent agent jobs (chat / improve / sica) with their phase and results."""
+    return {"jobs": c.agent_loop.list_jobs(limit=limit)}
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str, c: ContainerDep) -> dict[str, object]:
+    """Poll a specific job for its current phase and result."""
+    job = c.agent_loop.get_job(job_id)
+    if not job:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return c.agent_loop._job_summary(job)  # noqa: SLF001
+
+
+@router.post("/improve/async")
+def request_improvement_async(body: ImproveRequestBody, c: ContainerDep) -> dict[str, object]:
+    """
+    Kick off an improvement job asynchronously.
+    Returns job_id immediately — poll GET /api/v1/jobs/{job_id} for results.
+    """
+    job_id = c.agent_loop.start_improvement_job(
+        instruction=body.instruction,
+        target_file=body.target_file,
+        fullstack=False,
+    )
+    return {"job_id": job_id, "status": "started"}
 
 
 # ── system info & filesystem access ───────────────────────────────────────────

@@ -8,11 +8,16 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from super_agent.app.domain.hdc import HDCSpace, associate_task_solution
 from super_agent.app.domain.quantum_inspired import estimate_candidate_costs, pick_best_candidate_index
 from super_agent.app.infrastructure.ast_liveness import parse_ok
-from super_agent.app.infrastructure.git_safe import current_head, git_commit_all
+from super_agent.app.infrastructure.git_safe import current_head, git_commit_all, git_revert_to, git_log
+
+if TYPE_CHECKING:
+    from super_agent.app.services.orchestrator import SuperAgentOrchestrator
+    from super_agent.app.infrastructure.convex_store import ConvexAgentStore
 
 logger = logging.getLogger(__name__)
 
@@ -215,3 +220,152 @@ def run_outer_loop_summary(repo: Path) -> str:
     _save_benchmark(data_dir, bench)
     plan = plan_improvements(bench)
     return json.dumps(plan, indent=2)
+
+
+# ── full SICA improvement cycle ───────────────────────────────────────────────
+
+_REGRESSION_THRESHOLD = 0.10  # rollback if score drops more than 10%
+
+
+def run_improvement_cycle(
+    orchestrator: "SuperAgentOrchestrator",
+    data_dir: Path,
+    *,
+    gap_id: str | None = None,
+    convex: "ConvexAgentStore | None" = None,
+) -> dict[str, object]:
+    """
+    Full SICA cycle:
+      1. Run benchmark to get baseline
+      2. Plan improvements from blueprint gaps
+      3. Pick the top-priority gap (or a specific gap_id)
+      4. Apply the improvement via orchestrator.improve_self
+      5. Re-run benchmark to verify no regression
+      6. Roll back if tests regressed by more than _REGRESSION_THRESHOLD
+      7. Record everything to data_dir/benchmark_history.jsonl
+
+    Returns a rich status dict suitable for API responses and Convex storage.
+    """
+    repo = data_dir.parent
+    started_at = datetime.now(UTC).isoformat()
+
+    # 1. Baseline benchmark
+    bench_before = run_pytest_benchmark(repo)
+    _save_benchmark(data_dir, bench_before)
+
+    stable_hash = current_head(repo)
+
+    # 2. Plan
+    plan = plan_improvements(bench_before)
+    todos = plan.get("todos", [])
+    if not todos:
+        return {
+            "status": "no_gaps",
+            "message": "Blueprint has no open gaps — nothing to do.",
+            "plan": plan,
+            "started_at": started_at,
+        }
+
+    # 3. Pick target gap
+    chosen: dict[str, object] | None = None
+    if gap_id:
+        chosen = next((t for t in todos if t.get("id") == gap_id), None)
+    if chosen is None:
+        chosen = todos[0]
+
+    instruction = (
+        f"Implement the following blueprint item: {chosen['task']}. "
+        f"Notes: {chosen.get('notes', '')}"
+    )
+
+    logger.info("SICA cycle: applying gap '%s' — %s", chosen.get("id"), chosen.get("task"))
+
+    # 4. Apply improvement
+    try:
+        result = orchestrator.improve_self(instruction)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("SICA improve_self raised")
+        return {
+            "status": "error",
+            "message": str(exc),
+            "gap": chosen,
+            "started_at": started_at,
+            "bench_before": bench_before,
+        }
+
+    if not result.ok:
+        return {
+            "status": "improve_failed",
+            "message": result.error or "improve_self returned ok=False",
+            "gap": chosen,
+            "result": result.model_dump(),
+            "started_at": started_at,
+            "bench_before": bench_before,
+        }
+
+    # 5. Post-improvement benchmark
+    bench_after = run_pytest_benchmark(repo)
+    _save_benchmark(data_dir, bench_after)
+
+    score_before = float(bench_before.get("score", 1.0))
+    score_after = float(bench_after.get("score", 1.0))
+    regression = round(score_before - score_after, 4)
+
+    # 6. Rollback if tests regressed
+    reverted = False
+    revert_msg = ""
+    if regression > _REGRESSION_THRESHOLD and stable_hash:
+        ok_rev, revert_msg = git_revert_to(repo, stable_hash)
+        reverted = ok_rev
+        logger.warning(
+            "SICA: score dropped %.2f → %.2f (regression %.2f > threshold %.2f), reverted=%s",
+            score_before, score_after, regression, _REGRESSION_THRESHOLD, reverted,
+        )
+
+    # 7. Persist to Convex if available
+    cycle_record = {
+        "status": "reverted" if reverted else "applied",
+        "gap": chosen,
+        "result": result.model_dump(),
+        "bench_before": bench_before,
+        "bench_after": bench_after,
+        "score_delta": round(score_after - score_before, 4),
+        "regression": regression,
+        "reverted": reverted,
+        "revert_msg": revert_msg,
+        "stable_hash": stable_hash or "",
+        "started_at": started_at,
+        "finished_at": datetime.now(UTC).isoformat(),
+    }
+
+    if convex:
+        try:
+            convex.create_task(
+                title=f"SICA: {chosen['task'][:80]}",
+                task_type="sica_cycle",
+                status="reverted" if reverted else "done",
+                metadata=json.dumps({"gap_id": chosen.get("id"), "score_delta": cycle_record["score_delta"]}),
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("SICA: failed to write cycle record to Convex", exc_info=True)
+
+    return cycle_record
+
+
+# ── feature request → improve ─────────────────────────────────────────────────
+
+_FEATURE_REQUEST_RE = re.compile(
+    r"\b(build|add|create|implement|make|develop|give me|i need|i want|can you add|"
+    r"please add|feature|endpoint|button|tab|page|component|function|api)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_feature_request(text: str) -> bool:
+    """Return True if the user's message appears to be requesting a new feature / code change."""
+    return bool(_FEATURE_REQUEST_RE.search(text))
+
+
+def describe_gap_for_chat(gap: dict[str, object]) -> str:
+    """Format a gap dict into a readable one-liner for embedding in a chat response."""
+    return f"**Blueprint gap [{gap.get('id')}]:** {gap.get('task', '')} — {gap.get('notes', '')}"

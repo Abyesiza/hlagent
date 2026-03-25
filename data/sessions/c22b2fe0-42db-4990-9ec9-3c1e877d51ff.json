@@ -99,6 +99,20 @@
       "route": "neural",
       "grounded": true,
       "ts": "2026-03-25T06:55:49.069365+00:00"
+    },
+    {
+      "role": "user",
+      "text": "I need you to check and always tell me the weather in region",
+      "route": "",
+      "grounded": false,
+      "ts": "2026-03-25T07:31:57.601103+00:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Today's date is Wednesday, March 25, 2026.\n\nI can certainly provide you with weather information! However, to do so accurately, I need you to specify **which region** you are interested in. \"Region\" is too broad for a precise weather forecast.\n\nPlease tell me:\n\n*   **The specific city and country** (e.g., \"London, UK\", \"New York City, USA\", \"Tehran, Iran\")\n*   **Or a specific geographical area** (e.g., \"The Alps\", \"Sahara Desert\")\n\nOnce you specify the location, I can perform a live search to give you the current weather conditions and forecast for that area.\n\nAlso, please note that while I can *always tell you* the weather when you ask, I don't proactively send unsolicited updates. You would need to prompt me each time you want the weather for your specified region.",
+      "route": "neural",
+      "grounded": false,
+      "ts": "2026-03-25T07:31:57.601127+00:00"
     }
   ],
   "notify_email_after_reply": false,

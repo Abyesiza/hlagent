@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
         container.settings,
         container.gemini,
         convex_store=container.convex_store,
+        orchestrator=container.orchestrator,
     )
     scheduler.start()
     logger.info("Super Agent API started (heartbeat scheduler on)")
