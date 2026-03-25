@@ -45,7 +45,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/core/__init__.py** (2 lines) — Config, security, Gemini.
 
-**super_agent/app/core/config.py** (96 lines) — Accept GEMINI_API_KEY (no SUPER_AGENT_ prefix) as the primary key.
+**super_agent/app/core/config.py** (231 lines) — Accept GEMINI_API_KEY (no SUPER_AGENT_ prefix) as the primary key.
   class Settings
   def get_settings()
 
@@ -106,9 +106,14 @@ nextjstester/       Next.js 16 frontend (local tester)
   def parse_ok()
   def parse_src_ok() — Validate Python source string without writing it to disk.
 
-**super_agent/app/infrastructure/git_safe.py** (43 lines)
+**super_agent/app/infrastructure/convex_store.py** (124 lines) — Convex-backed research memory, heartbeat config (topics, cursor, persona), and tasks.
+  class ConvexAgentStore — Convex-backed research memory, heartbeat config (topics, cursor, persona), and t
+
+**super_agent/app/infrastructure/git_safe.py** (79 lines) — Hard-reset the working tree and index to a specific commit.
   def git_commit_all()
   def current_head()
+  def git_revert_to() — Hard-reset the working tree and index to a specific commit.
+  def git_log() — Return the last `limit` commits as a list of {hash, subject, date}.
 
 **super_agent/app/infrastructure/hdc_memory_store.py** (146 lines) — HDC associative memory store backed by JSON.
   def _fingerprint()
@@ -132,7 +137,7 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/services/__init__.py** (2 lines) — Orchestration services.
 
-**super_agent/app/services/agent_loop.py** (79 lines) — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
+**super_agent/app/services/agent_loop.py** (266 lines) — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
   class AgentJob
   class AgentLoopService — Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack.
 
@@ -144,34 +149,49 @@ nextjstester/       Next.js 16 frontend (local tester)
   def build_codebase_md()
   def refresh_codebase_md() — Regenerate data/CODEBASE.md and return its path.
 
-**super_agent/app/services/heartbeat.py** (36 lines)
+**super_agent/app/services/email_notify.py** (196 lines) — Send one email via SMTP (TLS). Returns True if sent, False if skipped or failed.
+  def email_ready()
+  def _recipient()
+  def _sender()
+  def send_email() — Send one email via SMTP (TLS). Returns True if sent, False if skipped or failed.
+  def notify_research_saved()
+  def notify_background_task()
+  def notify_chat_turn_complete() — Email the user a copy of this chat turn. Returns True if SMTP accepted the messa
+  def notify_improvement()
+  def notify_agent_job_finished()
+  def notify_full_stack_improvement()
+
+**super_agent/app/services/heartbeat.py** (93 lines)
   def attach_heartbeat()
 
-**super_agent/app/services/orchestrator.py** (717 lines) — Connects workspace context → intent → SymPy or Gemini → HDC memory.
+**super_agent/app/services/orchestrator.py** (793 lines) — True when the user asked for this reply (or outcome) to be emailed.
+  def _user_requested_email_reply() — True when the user asked for this reply (or outcome) to be emailed.
   def _today_str()
   def _needs_search()
   def _is_improve_intent()
   def _extract_python()
   class SuperAgentOrchestrator — Connects workspace context → intent → SymPy or Gemini → HDC memory.
 
-**super_agent/app/services/research_loop.py** (152 lines) — Performs proactive research. Each call advances through the HEARTBEAT.md
+**super_agent/app/services/research_loop.py** (262 lines) — Performs proactive research. Each call advances through the heartbeat topic list
+  def read_heartbeat_topics_file()
+  def read_cursor_file()
+  def write_cursor_file()
+  def read_persona_file()
   def read_heartbeat_topics()
-  def _read_cursor()
-  def _write_cursor()
   def heartbeat_status()
   def read_persona()
   def append_persona()
   def append_memory()
   def read_memory()
   def clear_memory()
-  def run_proactive_research() — Performs proactive research. Each call advances through the HEARTBEAT.md
+  def run_proactive_research() — Performs proactive research. Each call advances through the heartbeat topic list
 
-**super_agent/app/services/session_store.py** (102 lines) — In-memory sessions, optionally persisted to data/sessions/<id>.json.
+**super_agent/app/services/session_store.py** (109 lines) — Set when the user asks to be emailed after this assistant reply.
   class Turn
   class Session
   class SessionStore — In-memory sessions, optionally persisted to data/sessions/<id>.json.
 
-**super_agent/app/services/sica_loop.py** (218 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
+**super_agent/app/services/sica_loop.py** (372 lines) — SICA dual-loop: real pytest benchmark + HDC + quantum candidate selection.
   def run_pytest_benchmark() — Run the test suite under `repo/tests/` and return a score dict.
   def _save_benchmark()
   def load_benchmark_history()
@@ -179,8 +199,11 @@ nextjstester/       Next.js 16 frontend (local tester)
   def sica_step() — Inner loop: write file → AST liveness → git commit → HDC vector.
   def write_non_python_file() — Write any non-Python file and commit it.
   def run_outer_loop_summary() — Run benchmark → plan improvements → save history → return JSON summary.
+  def run_improvement_cycle() — Full SICA cycle:
+  def looks_like_feature_request() — Return True if the user's message appears to be requesting a new feature / code 
+  def describe_gap_for_chat() — Format a gap dict into a readable one-liner for embedding in a chat response.
 
-**super_agent/app/services/workspace_context.py** (48 lines) — Load CODEBASE.md; auto-generate if missing.
+**super_agent/app/services/workspace_context.py** (63 lines) — Load CODEBASE.md; auto-generate if missing.
   def _tail_text()
   def load_soul()
   def load_memory_excerpt()
@@ -191,11 +214,11 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/api/__init__.py** (2 lines) — HTTP / WebSocket API.
 
-**super_agent/app/api/deps.py** (43 lines) — Alias for routes that reference c.memory.
+**super_agent/app/api/deps.py** (53 lines) — Alias for routes that reference c.memory.
   class AppContainer
   def build_container()
 
-**super_agent/app/api/routes.py** (408 lines) — SSE endpoint: streams the agent response token-by-token.
+**super_agent/app/api/routes.py** (609 lines) — SSE endpoint: streams the agent response token-by-token.
   def get_container()
   def blueprint_status()
   def next_gaps()
@@ -204,6 +227,9 @@ nextjstester/       Next.js 16 frontend (local tester)
   def chat_stream() — SSE endpoint: streams the agent response token-by-token.
   def start_agent()
   def get_job()
+  class LocationData
+  def set_agent_location() — Sets the agent's current geographical location.
+  def get_agent_location() — Retrieves the agent's last known geographical location.
   def sympy_run()
   def route_intent()
   class SandboxRunRequest
@@ -218,12 +244,21 @@ nextjstester/       Next.js 16 frontend (local tester)
   def research_trigger()
   class HeartbeatTopicsRequest
   def heartbeat_topics_get()
-  def heartbeat_topics_set() — Replace the HEARTBEAT.md topic list.
+  def heartbeat_topics_set() — Replace heartbeat topics (Convex researchConfig or HEARTBEAT.md).
   def heartbeat_status_get()
   def memory_read()
   def memory_clear()
+  def notify_test_email() — Send a test message if SMTP is configured (check spam folder).
+  def agent_tasks_recent() — Recent long-running task rows from Convex (empty when CONVEX_URL is not set).
+  class SicaGapRequest
   def sica_summary()
+  def sica_run_cycle() — Kick off a full SICA improvement cycle in the background.
+  def sica_apply_gap() — Apply an improvement for a specific instruction, with benchmark verify + rollbac
+  def sica_status() — Current SICA state: blueprint gaps, latest benchmark score, recent cycle history
   def benchmark_history()
+  def list_jobs() — List recent agent jobs (chat / improve / sica) with their phase and results.
+  def get_job() — Poll a specific job for its current phase and result.
+  def request_improvement_async() — Kick off an improvement job asynchronously.
   def get_os_info() — Returns information about the operating system where the agent is running.
   def list_files() — Lists files and directories within the agent's data directory.
   def list_desktop_files() — Lists files and directories directly on the user's desktop.
@@ -237,6 +272,6 @@ nextjstester/       Next.js 16 frontend (local tester)
 
 **super_agent/app/__init__.py** (2 lines) — Application package.
 
-**super_agent/app/main.py** (56 lines)
+**super_agent/app/main.py** (88 lines)
   def lifespan()
   def health()
