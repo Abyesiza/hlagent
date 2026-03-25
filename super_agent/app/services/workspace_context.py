@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from super_agent.app.infrastructure.convex_store import ConvexAgentStore
 
 
 def _tail_text(path: Path, max_chars: int = 4000) -> str:
@@ -16,7 +20,14 @@ def load_soul(data_dir: Path, max_chars: int = 3000) -> str:
     return _tail_text(data_dir / "SOUL.md", max_chars)
 
 
-def load_memory_excerpt(data_dir: Path, max_chars: int = 4000) -> str:
+def load_memory_excerpt(
+    data_dir: Path,
+    max_chars: int = 4000,
+    *,
+    convex: "ConvexAgentStore | None" = None,
+) -> str:
+    if convex is not None:
+        return convex.read_concatenated(max_chars)
     return _tail_text(data_dir / "MEMORY.md", max_chars)
 
 
@@ -32,9 +43,13 @@ def load_codebase_snapshot(data_dir: Path, max_chars: int = 8000) -> str:
     return _tail_text(path, max_chars)
 
 
-def build_system_preamble(data_dir: Path) -> str:
+def build_system_preamble(
+    data_dir: Path,
+    *,
+    convex: "ConvexAgentStore | None" = None,
+) -> str:
     soul = load_soul(data_dir)
-    mem = load_memory_excerpt(data_dir)
+    mem = load_memory_excerpt(data_dir, convex=convex)
     codebase = load_codebase_snapshot(data_dir)
 
     parts: list[str] = []

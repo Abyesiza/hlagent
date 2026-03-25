@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -13,7 +13,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SUPER_AGENT_",
-        env_file=_REPO_ROOT / ".env",
+        env_file=(
+            _REPO_ROOT / ".env",
+            _REPO_ROOT / ".env.local",
+        ),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -50,6 +53,61 @@ class Settings(BaseSettings):
     heartbeat_interval_seconds: int = Field(default=300)
     agent_loop_timeout_seconds: float = Field(default=3600.0)
 
+    convex_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPER_AGENT_CONVEX_URL", "CONVEX_URL",
+        ),
+        description=(
+            "Convex deployment URL: research memory, tasks, heartbeat topics/cursor/persona. "
+            "Also read from CONVEX_URL. Frontend uses the same URL as NEXT_PUBLIC_CONVEX_URL."
+        ),
+    )
+
+    # ── email (SMTP; use app password for Gmail — never commit secrets) ───────
+    email_notifications_enabled: bool = Field(default=True)
+    smtp_host: str = Field(default="smtp.gmail.com")
+    smtp_port: int = Field(default=587)
+    smtp_user: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPER_AGENT_SMTP_USER", "SMTP_USER", "Email", "EMAIL",
+        ),
+        description="SMTP login, usually your Gmail address.",
+    )
+    smtp_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPER_AGENT_SMTP_PASSWORD", "SMTP_PASSWORD", "EmailPassword", "EMAIL_PASSWORD",
+        ),
+        description="App password or SMTP secret.",
+    )
+    notification_email: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPER_AGENT_NOTIFICATION_EMAIL", "NOTIFICATION_EMAIL", "Email", "EMAIL",
+        ),
+        description="Where to send alerts. Defaults to smtp_user if unset.",
+    )
+    email_from: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "SUPER_AGENT_EMAIL_FROM", "EMAIL_FROM",
+        ),
+        description="From address; defaults to smtp_user.",
+    )
+    notify_on_research: bool = Field(default=True, description="Email when new proactive research is saved.")
+    notify_on_background_tasks: bool = Field(
+        default=True,
+        description="Email when background tasks fail (e.g. research trigger).",
+    )
+    notify_on_user_requested_email: bool = Field(
+        default=True,
+        description='When the user says "email me" / "notify me by email", email after that reply.',
+    )
+    notify_on_agent_job: bool = Field(default=True, description="Email when /agent/start async job finishes.")
+    notify_on_improve: bool = Field(default=True, description="Email after /improve or /improve/fullstack.")
+
     cors_origins: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
     )
@@ -81,6 +139,28 @@ class Settings(BaseSettings):
             if plain:
                 return self.model_copy(update={"gemini_api_key": plain})
         return self
+
+    @model_validator(mode="after")
+    def _smtp_host_port_unprefixed(self) -> "Settings":
+        """Pick up SMTP_HOST / SMTP_PORT without SUPER_AGENT_ prefix."""
+        updates: dict[str, object] = {}
+        host = os.environ.get("SMTP_HOST", "").strip()
+        if host:
+            updates["smtp_host"] = host
+        port_raw = os.environ.get("SMTP_PORT", "").strip()
+        if port_raw.isdigit():
+            updates["smtp_port"] = int(port_raw)
+        return self.model_copy(update=updates) if updates else self
+
+    @field_validator("smtp_password", mode="before")
+    @classmethod
+    def _smtp_password_strip(cls, v: object) -> object:
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            s = v.replace(" ", "").strip()
+            return s if s else None
+        return v
 
     @model_validator(mode="after")
     def _vercel_writable_data_dir(self) -> "Settings":

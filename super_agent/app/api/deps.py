@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from super_agent.app.core.config import Settings, get_settings
 from super_agent.app.core.gemini_client import GeminiClient
+from super_agent.app.infrastructure.convex_store import ConvexAgentStore
 from super_agent.app.infrastructure.hdc_memory_store import HDCMemoryStore
 from super_agent.app.services.agent_loop import AgentLoopService
 from super_agent.app.services.orchestrator import SuperAgentOrchestrator
@@ -16,6 +17,7 @@ class AppContainer:
     gemini: GeminiClient
     hdc_memory: HDCMemoryStore
     sessions: SessionStore
+    convex_store: ConvexAgentStore | None
     orchestrator: SuperAgentOrchestrator
     agent_loop: AgentLoopService
 
@@ -30,13 +32,21 @@ def build_container() -> AppContainer:
     gemini = GeminiClient(settings)
     hdc = HDCMemoryStore(settings.data_dir / "hdc_memory.json")
     sessions = SessionStore(settings.data_dir / "sessions")
-    orchestrator = SuperAgentOrchestrator(settings, gemini, hdc, sessions)
+    convex_store = (
+        ConvexAgentStore(settings.convex_url)
+        if settings.convex_url
+        else None
+    )
+    orchestrator = SuperAgentOrchestrator(
+        settings, gemini, hdc, sessions, convex_store=convex_store
+    )
     agent_loop = AgentLoopService(settings, orchestrator)
     return AppContainer(
         settings=settings,
         gemini=gemini,
         hdc_memory=hdc,
         sessions=sessions,
+        convex_store=convex_store,
         orchestrator=orchestrator,
         agent_loop=agent_loop,
     )

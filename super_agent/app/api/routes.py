@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import platform
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,8 @@ from super_agent.app.infrastructure.intent_router import classify_intent
 from super_agent.app.infrastructure.sympy_runner import run_symcode
 
 router = APIRouter(prefix="/api/v1")
+
+logger = logging.getLogger(__name__)
 
 _stream_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sse")
 
@@ -194,8 +197,17 @@ class ImproveRequestBody(BaseModel):
 @router.post("/improve", response_model=None)
 def request_improvement(body: ImproveRequestBody, c: ContainerDep) -> dict[str, object]:
     from super_agent.app.domain.chat_schemas import ImproveRequest
+    from super_agent.app.services.email_notify import notify_improvement
+
     req = ImproveRequest(instruction=body.instruction, target_file=body.target_file)
     result = c.orchestrator.improve_self(req.instruction, req.target_file)
+    notify_improvement(
+        c.settings,
+        ok=result.ok,
+        instruction=req.instruction,
+        target_file=result.target_file,
+        error=result.error,
+    )
     return result.model_dump()
 
 
@@ -206,6 +218,9 @@ def request_fullstack_improvement(body: ImproveRequestBody, c: ContainerDep) -> 
     Returns a FullStackImproveResult with backend + frontend_api + frontend_ui sub-results.
     """
     result = c.orchestrator.improve_full_stack(body.instruction, body.target_file)
+    from super_agent.app.services.email_notify import notify_full_stack_improvement
+
+    notify_full_stack_improvement(c.settings, summary=result.model_dump())
     return result.model_dump()
 
 
@@ -227,14 +242,40 @@ def improvement_history(c: ContainerDep, limit: int = 20) -> dict[str, object]:
 # ── research & heartbeat ──────────────────────────────────────────────────────
 
 @router.post("/research/trigger")
-def research_trigger(background_tasks: BackgroundTasks, c: ContainerDep) -> dict[str, str]:
+def research_trigger(background_tasks: BackgroundTasks, c: ContainerDep) -> dict[str, object]:
     from super_agent.app.services import research_loop
 
+    convex = c.convex_store
+    task_id = convex.create_task("proactive_research", detail="POST /research/trigger") if convex else None
+
     def _run() -> None:
-        research_loop.run_proactive_research(c.gemini, c.settings.data_dir)
+        try:
+            if convex and task_id:
+                convex.set_task_status(task_id, "running")
+            research_loop.run_proactive_research(
+                c.gemini,
+                c.settings.data_dir,
+                convex=convex,
+            )
+        except Exception as e:
+            if convex and task_id:
+                convex.set_task_status(task_id, "failed", error=str(e))
+            from super_agent.app.services.email_notify import notify_background_task
+
+            notify_background_task(
+                c.settings,
+                kind="proactive_research",
+                status="failed",
+                detail="POST /research/trigger",
+                error=str(e),
+            )
+            logger.exception("research/trigger background task failed")
+            return
+        if convex and task_id:
+            convex.set_task_status(task_id, "completed")
 
     background_tasks.add_task(_run)
-    return {"status": "scheduled"}
+    return {"status": "scheduled", **({"task_id": task_id} if task_id else {})}
 
 
 class HeartbeatTopicsRequest(BaseModel):
@@ -244,27 +285,31 @@ class HeartbeatTopicsRequest(BaseModel):
 @router.get("/heartbeat/topics")
 def heartbeat_topics_get(c: ContainerDep) -> dict[str, object]:
     from super_agent.app.services.research_loop import read_heartbeat_topics
-    topics = read_heartbeat_topics(c.settings.data_dir)
-    return {"topics": topics}
+    topics = read_heartbeat_topics(c.settings.data_dir, convex=c.convex_store)
+    return {"topics": topics, "source": "convex" if c.convex_store else "file"}
 
 
 @router.post("/heartbeat/topics")
 def heartbeat_topics_set(body: HeartbeatTopicsRequest, c: ContainerDep) -> dict[str, object]:
-    """Replace the HEARTBEAT.md topic list."""
+    """Replace heartbeat topics (Convex researchConfig or HEARTBEAT.md)."""
+    if c.convex_store:
+        c.convex_store.set_heartbeat_topics(body.topics)
+        return {"status": "ok", "topics": body.topics, "source": "convex"}
     heartbeat_path = c.settings.data_dir / "HEARTBEAT.md"
     heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
     lines = ["# Heartbeat topics", "", "The agent researches these topics in rotation on each heartbeat.", ""]
     for t in body.topics:
         lines.append(f"- {t}")
     heartbeat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"status": "ok", "topics": body.topics}
+    return {"status": "ok", "topics": body.topics, "source": "file"}
 
 
 @router.get("/heartbeat/status")
 def heartbeat_status_get(c: ContainerDep) -> dict[str, object]:
     from super_agent.app.services.research_loop import heartbeat_status
-    status = heartbeat_status(c.settings.data_dir)
+    status = heartbeat_status(c.settings.data_dir, convex=c.convex_store)
     status["interval_seconds"] = c.settings.heartbeat_interval_seconds
+    status["research_source"] = "convex" if c.convex_store else "file"
     return status
 
 
@@ -273,15 +318,39 @@ def heartbeat_status_get(c: ContainerDep) -> dict[str, object]:
 @router.get("/memory/research")
 def memory_read(c: ContainerDep) -> dict[str, object]:
     from super_agent.app.services.research_loop import read_memory
-    content = read_memory(c.settings.data_dir)
-    return {"content": content, "chars": len(content)}
+    content = read_memory(c.settings.data_dir, convex=c.convex_store)
+    source = "convex" if c.convex_store else "file"
+    return {"content": content, "chars": len(content), "source": source}
 
 
 @router.delete("/memory/research")
 def memory_clear(c: ContainerDep) -> dict[str, object]:
     from super_agent.app.services.research_loop import clear_memory
-    clear_memory(c.settings.data_dir)
-    return {"status": "cleared"}
+    clear_memory(c.settings.data_dir, convex=c.convex_store)
+    return {"status": "cleared", "source": "convex" if c.convex_store else "file"}
+
+
+@router.post("/notify/test")
+def notify_test_email(c: ContainerDep) -> dict[str, object]:
+    """Send a test message if SMTP is configured (check spam folder)."""
+    from super_agent.app.services.email_notify import email_ready, send_email
+
+    ok = False
+    if email_ready(c.settings):
+        ok = send_email(
+            c.settings,
+            "[Super Agent] SMTP test",
+            "Super Agent email notifications are configured correctly.",
+        )
+    return {"sent": ok, "email_configured": email_ready(c.settings)}
+
+
+@router.get("/agent/tasks")
+def agent_tasks_recent(c: ContainerDep, limit: int = Query(default=50, ge=1, le=200)) -> dict[str, object]:
+    """Recent long-running task rows from Convex (empty when CONVEX_URL is not set)."""
+    if not c.convex_store:
+        return {"tasks": [], "source": "none"}
+    return {"tasks": c.convex_store.list_tasks(limit=limit), "source": "convex"}
 
 
 # ── SICA ─────────────────────────────────────────────────────────────────────

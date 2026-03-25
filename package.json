@@ -1,0 +1,32 @@
+{
+  "name": "hlagent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "convex:dev": "convex dev",
+    "convex:codegen": "convex codegen"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abyesiza/hlagent.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Abyesiza/hlagent/issues"
+  },
+  "homepage": "https://github.com/Abyesiza/hlagent#readme",
+  "dependencies": {
+    "convex": "^1.34.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}

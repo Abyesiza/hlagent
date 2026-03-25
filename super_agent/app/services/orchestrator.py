@@ -9,6 +9,7 @@ from super_agent.app.domain.math_schemas import SymCodeRequest, SymCodeResult, S
 from super_agent.app.infrastructure.hdc_memory_store import HDCMemoryStore
 from super_agent.app.infrastructure.intent_router import classify_intent
 from super_agent.app.infrastructure.sympy_runner import llm_output_suspicious_for_symcode, run_symcode
+from super_agent.app.services import email_notify
 from super_agent.app.services.session_store import Session, SessionStore
 from super_agent.app.services.workspace_context import build_system_preamble
 
@@ -16,12 +17,51 @@ if TYPE_CHECKING:
     from super_agent.app.core.config import Settings
     from super_agent.app.core.gemini_client import GeminiClient
     from super_agent.app.domain.chat_schemas import FullStackImproveResult, ImproveResult
+    from super_agent.app.infrastructure.convex_store import ConvexAgentStore
 
 _CURRENT_EVENTS_RE = re.compile(
-    r"\b(current|today|now|latest|recent|2025|2026|news|happening|"
-    r"this (year|month|week|day)|right now|what is going on|what happened)\b",
+    r"\b("
+    # explicit time anchors
+    r"current|today|now|latest|recent|2025|2026|news|happening|"
+    r"this\s+(year|month|week|day)|right\s+now|what\s+is\s+going\s+on|what\s+happened|"
+    # research / lookup intents
+    r"research|investigate|look\s+up|find\s+out|tell\s+me\s+about|"
+    r"situation|update|status|development|transfer|deal|contract|"
+    # sports / entertainment entities likely to be time-sensitive
+    r"football|soccer|basketball|nba|nfl|premier\s+league|champions\s+league|"
+    r"liverpool|arsenal|chelsea|manchester|barcelona|real\s+madrid|"
+    r"salah|messi|ronaldo|haaland|mbappe|"
+    r"match|game|score|goal|signing|injury|lineup|squad|"
+    # general current-events triggers
+    r"price|stock|market|election|war|conflict|crisis|president|prime\s+minister|"
+    r"released|launched|announced|broke|breaking"
+    r")\b",
     re.I,
 )
+
+def _user_requested_email_reply(message: str) -> bool:
+    """
+    True when the user asked for this reply (or outcome) to be emailed.
+    Does not require a session_id — chat must still notify the owner.
+    """
+    if re.search(r"(?i)\b(don't|do\s+not)\s+e?-?mail\s+me\b", message):
+        return False
+    # "send me an email", "send me email", "and send me an email", "email me", etc.
+    patterns = (
+        r"(?i)\be-?mail\s+me\b",
+        r"(?i)\bnotify\s+me\s+(by|via)\s+e-?mail\b",
+        r"(?i)\bsend\s+me\s+(an?\s+)?e-?mail\b",
+        r"(?i)\band\s+send\s+me\s+(an?\s+)?e-?mail\b",
+        r"(?i)\bshoot\s+me\s+(an?\s+)?e-?mail\b",
+        r"(?i)\bkeep\s+me\s+posted\s+by\s+e-?mail\b",
+    )
+    if any(re.search(p, message) for p in patterns):
+        return True
+    # "send me ... email" with a few words in between (e.g. "send me the summary by email")
+    if re.search(r"(?i)\bsend\s+me\s+.{0,60}\be-?mail\b", message):
+        return True
+    return False
+
 
 _IMPROVE_VERBS_RE = re.compile(
     r"^\s*(?:please\s+|can\s+you\s+|could\s+you\s+|i\s+want\s+you\s+to\s+)?"
@@ -92,11 +132,14 @@ class SuperAgentOrchestrator:
         gemini: "GeminiClient",
         memory: HDCMemoryStore,
         sessions: SessionStore,
+        *,
+        convex_store: "ConvexAgentStore | None" = None,
     ) -> None:
         self._settings = settings
         self._gemini = gemini
         self._memory = memory
         self._sessions = sessions
+        self._convex_store = convex_store
 
     def _system_instruction(self, preamble: str) -> str:
         today = _today_str()
@@ -114,11 +157,16 @@ class SuperAgentOrchestrator:
         if not message:
             return ChatTurnResult(route="error", answer="Empty message.", intent="unknown")
 
+        user_wants_email = _user_requested_email_reply(message)
+
         session: Session | None = None
         if session_id:
             session = self._sessions.get_or_create(session_id)
 
-        preamble = build_system_preamble(self._settings.data_dir)
+        preamble = build_system_preamble(
+            self._settings.data_dir,
+            convex=self._convex_store,
+        )
         history = session.history_for_llm() if session else None
 
         prior, sim, matched_fp = self._memory.retrieve(message)
@@ -133,6 +181,7 @@ class SuperAgentOrchestrator:
             "hdc_matched_fp": matched_fp,
             "session_id": session_id,
             "date": _today_str(),
+            "user_requested_email": user_wants_email,
         }
 
         if auto_improve and self._gemini.enabled and _is_improve_intent(message):
@@ -146,6 +195,18 @@ class SuperAgentOrchestrator:
             session.add("user", message)
             session.add("assistant", result.answer, route=result.route, grounded=result.metadata.get("grounded", False))  # type: ignore[arg-type]
             self._sessions.save(session_id)  # type: ignore[arg-type]
+
+        if user_wants_email:
+            sent = email_notify.notify_chat_turn_complete(
+                self._settings,
+                user_context=message,
+                answer=result.answer,
+                route=result.route,
+                intent=result.intent,
+            )
+            result.metadata["email_notification_sent"] = sent
+        else:
+            result.metadata["email_notification_sent"] = False
 
         return result
 

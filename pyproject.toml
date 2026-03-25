@@ -16,6 +16,7 @@ dependencies = [
   "numpy>=2.0.0",
   "google-genai>=1.0.0",
   "apscheduler>=3.10.0",
+  "convex>=0.6.0",
 ]
 
 [project.optional-dependencies]

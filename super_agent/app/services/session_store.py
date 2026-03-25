@@ -28,6 +28,9 @@ class Session:
     session_id: str
     turns: deque[Turn] = field(default_factory=lambda: deque(maxlen=_MAX_TURNS_ON_DISK))
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    """Set when the user asks to be emailed after this assistant reply."""
+    notify_email_after_reply: bool = False
+    notify_email_context: str = ""
 
     def history_for_llm(self) -> list[dict[str, str]]:
         """Last N turns in {role, text} format for Gemini multi-turn contents."""
@@ -46,11 +49,15 @@ class Session:
             "session_id": self.session_id,
             "created_at": self.created_at,
             "turns": [asdict(t) for t in self.turns],
+            "notify_email_after_reply": self.notify_email_after_reply,
+            "notify_email_context": self.notify_email_context,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Session":
         sess = cls(session_id=d["session_id"], created_at=d.get("created_at", ""))
+        sess.notify_email_after_reply = bool(d.get("notify_email_after_reply", False))
+        sess.notify_email_context = str(d.get("notify_email_context", ""))
         for t in d.get("turns", []):
             sess.turns.append(Turn(**t))
         return sess

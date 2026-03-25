@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from super_agent.app.core.config import Settings
 from super_agent.app.domain.agent_state import AgentPhase, AgentTurnState
 from super_agent.app.domain.chat_schemas import ChatTurnResult
+from super_agent.app.services.email_notify import notify_agent_job_finished
 from super_agent.app.services.orchestrator import SuperAgentOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class AgentLoopService:
     """Observe → Plan → Act → Reflect using the full SuperAgentOrchestrator stack."""
 
     def __init__(self, settings: Settings, orchestrator: SuperAgentOrchestrator) -> None:
+        self._settings = settings
         self._orchestrator = orchestrator
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-loop")
         self._jobs: dict[str, AgentJob] = {}
@@ -73,6 +75,13 @@ class AgentLoopService:
             job.turn = ChatTurnResult(route="error", answer=f"Orchestration failed: {e}", intent="error")
         finally:
             job.state.phase = AgentPhase.COMPLETE
+            notify_agent_job_finished(
+                self._settings,
+                job_id=job.job_id,
+                prompt=job.prompt,
+                error=job.error,
+                answer=job.turn.answer if job.turn else None,
+            )
 
     def get_job(self, job_id: str) -> AgentJob | None:
         return self._jobs.get(job_id)

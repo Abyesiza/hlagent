@@ -38,6 +38,8 @@ export function resetSessionId(): string {
 export type HealthCheck = {
   ok: boolean;
   gemini_configured?: boolean;
+  convex_configured?: boolean;
+  email_notifications_ready?: boolean;
   /** Shown in UI when ok is false (wrong URL, CORS, HTTP error, etc.) */
   detail?: string;
 };
@@ -62,11 +64,16 @@ export async function fetchHealth(base: string): Promise<HealthCheck> {
         detail: `HTTP ${r.status} from ${url}/health — check the API deployment URL.`,
       };
     }
-    const data = (await r.json()) as { status?: string; gemini_configured?: boolean };
+    const data = (await r.json()) as {
+      status?: string;
+      gemini_configured?: boolean;
+      convex_configured?: boolean;
+    };
     const ok = data.status === "ok";
     return {
       ok,
       gemini_configured: data.gemini_configured,
+      convex_configured: data.convex_configured,
       detail: ok
         ? undefined
         : `Unexpected health payload: ${JSON.stringify(data)}`,
