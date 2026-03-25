@@ -49,17 +49,30 @@ def next_gaps() -> dict[str, object]:
 
 # ── chat ──────────────────────────────────────────────────────────────────────
 
+class LocationData(BaseModel):
+    city: str = ""
+    region: str = ""
+    country: str = ""
+    country_code: str = ""
+    lat: float | None = None
+    lon: float | None = None
+    timezone: str = ""
+    source: str = "unknown"  # "browser" | "ip" | "manual"
+
+
 class ChatRequest(BaseModel):
     message: str = ""
     prompt: str = ""
     session_id: str | None = None
     auto_improve: bool = False
+    user_location: LocationData | None = None
 
 
 @router.post("/chat", response_model=ChatTurnResult)
 def chat_sync(body: ChatRequest, c: ContainerDep) -> ChatTurnResult:
     message = body.message or body.prompt
-    result = c.orchestrator.run(message, session_id=body.session_id, auto_improve=body.auto_improve)
+    loc = body.user_location.model_dump() if body.user_location else None
+    result = c.orchestrator.run(message, session_id=body.session_id, auto_improve=body.auto_improve, user_location=loc)
     result.grounded = result.metadata.get("grounded", False)  # type: ignore[assignment]
     result.session_id = body.session_id
     return result
@@ -506,6 +519,24 @@ def request_improvement_async(body: ImproveRequestBody, c: ContainerDep) -> dict
         fullstack=False,
     )
     return {"job_id": job_id, "status": "started"}
+
+
+# ── location ─────────────────────────────────────────────────────────────────
+
+@router.get("/location")
+def get_location(request: Request, ip: str | None = None) -> dict[str, object]:
+    """
+    Resolve caller's IP (or a supplied ?ip=...) to city/country/lat/lon via ip-api.com.
+    The frontend calls this when navigator.geolocation is unavailable or denied.
+    """
+    from super_agent.app.services.location import get_location_from_ip
+
+    # Use caller's real IP if no override supplied
+    resolve_ip = ip or request.client.host if request.client else ip
+    data = get_location_from_ip(resolve_ip)
+    if data.get("error"):
+        return {"ok": False, "error": data["error"]}
+    return {"ok": True, "location": data}
 
 
 # ── system info & filesystem access ───────────────────────────────────────────

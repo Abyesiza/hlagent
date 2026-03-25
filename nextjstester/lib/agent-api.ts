@@ -110,11 +110,17 @@ export async function postChat(
   message: string,
   sessionId: string | null,
   autoImprove = false,
+  userLocation?: LocationData | null,
 ): Promise<ChatTurnResult> {
   const r = await fetch(`${base}/api/v1/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId, auto_improve: autoImprove }),
+    body: JSON.stringify({
+      message,
+      session_id: sessionId,
+      auto_improve: autoImprove,
+      user_location: userLocation ?? null,
+    }),
   });
   const data = (await r.json()) as ChatTurnResult;
   if (!r.ok) throw new Error((data as unknown as { detail?: string }).detail ?? `HTTP ${r.status}`);
@@ -283,6 +289,59 @@ export async function getJob(base: string, jobId: string): Promise<AgentJobSumma
     const r = await fetch(`${base}/api/v1/jobs/${jobId}`, { cache: "no-store" });
     if (!r.ok) return null;
     return r.json() as Promise<AgentJobSummary>;
+  } catch { return null; }
+}
+
+export type LocationData = {
+  city: string;
+  region: string;
+  country: string;
+  country_code: string;
+  lat: number | null;
+  lon: number | null;
+  timezone: string;
+  source: "browser" | "ip" | "manual" | "unknown";
+};
+
+/**
+ * Try browser navigator.geolocation first (precise, requires permission).
+ * Falls back to IP geolocation via the agent API.
+ */
+export async function detectLocation(base: string): Promise<LocationData | null> {
+  // 1. Try browser geolocation (requires HTTPS or localhost)
+  if (typeof window !== "undefined" && "geolocation" in navigator) {
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 })
+      );
+      // Reverse geocode using ip-api with coords isn't available for free,
+      // so use the agent's IP endpoint to fill city/country, then override coords
+      const ipLoc = await fetchLocationFromServer(base);
+      return {
+        city: ipLoc?.city ?? "",
+        region: ipLoc?.region ?? "",
+        country: ipLoc?.country ?? "",
+        country_code: ipLoc?.country_code ?? "",
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        timezone: ipLoc?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+        source: "browser",
+      };
+    } catch {
+      // Permission denied or unavailable — fall through to IP
+    }
+  }
+  // 2. Fall back to IP geolocation
+  return fetchLocationFromServer(base);
+}
+
+async function fetchLocationFromServer(base: string): Promise<LocationData | null> {
+  try {
+    const r = await fetch(`${base}/api/v1/location`, { cache: "no-store" });
+    if (!r.ok) return null;
+    const d = (await r.json()) as { ok: boolean; location?: LocationData };
+    if (!d.ok || !d.location) return null;
+    return { ...d.location, source: "ip" };
   } catch { return null; }
 }
 

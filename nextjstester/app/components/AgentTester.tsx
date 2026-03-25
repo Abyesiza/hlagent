@@ -11,6 +11,7 @@ const DataBackground = dynamic(() => import("./DataBackground"), { ssr: false })
 
 import {
   clearResearchMemory,
+  detectLocation,
   fetchBlueprint,
   fetchCodebaseSnapshot,
   fetchHealth,
@@ -34,7 +35,7 @@ import {
   startAgentJob,
   triggerResearch,
 } from "@/lib/agent-api";
-import type { AgentJobSummary, SicaStatus } from "@/lib/agent-api";
+import type { AgentJobSummary, LocationData, SicaStatus } from "@/lib/agent-api";
 import type {
   BlueprintSnapshot,
   ChatMessage,
@@ -310,6 +311,10 @@ export default function AgentTester(){
   const [sandboxRunning,setSandboxRunning]=useState(false);
   const [sandboxResult,setSandboxResult]=useState<{stdout:string;stderr:string;returncode:number;timed_out:boolean}|null>(null);
 
+  const [userLocation,setUserLocation]=useState<LocationData|null>(null);
+  const [locationLoading,setLocationLoading]=useState(false);
+  const [locationEnabled,setLocationEnabled]=useState(false);
+
   const [memory,setMemory]=useState("");
   const [memoryLoading,setMemoryLoading]=useState(false);
   const [heartbeat,setHeartbeat]=useState<HeartbeatStatus|null>(null);
@@ -427,6 +432,17 @@ export default function AgentTester(){
     return "thinking";
   };
 
+  // ── location ─────────────────────────────────────────────────────────────────
+  const detectUserLocation=async()=>{
+    setLocationLoading(true);
+    try{
+      const loc=await detectLocation(baseUrl||getAgentBaseUrl());
+      setUserLocation(loc);
+      if(loc) setLocationEnabled(true);
+    }catch{/**/}
+    finally{setLocationLoading(false);}
+  };
+
   // ── send ────────────────────────────────────────────────────────────────────
   const sendSync=async(prefill?:string)=>{
     const text=(prefill??input).trim();
@@ -435,7 +451,8 @@ export default function AgentTester(){
     appendUser(text);
     if(!prefill) setInput("");
     setChatLoading(true);setThinkingStage(guessStage(text));
-    try{ const turn=await postChat(b,text,sessionId||null,autoImprove); appendAssistant(turn); }
+    const loc=locationEnabled?userLocation:null;
+    try{ const turn=await postChat(b,text,sessionId||null,autoImprove,loc); appendAssistant(turn); }
     catch(e){ appendAssistant({...EMPTY_TURN},e instanceof Error?e.message:"Request failed"); }
     finally{ setChatLoading(false); }
   };
@@ -523,11 +540,12 @@ export default function AgentTester(){
             </span>
             <button onClick={()=>void ping()} className="ml-auto text-xs transition hover:opacity-70" style={{color:"var(--txt-3)"}}>↺</button>
           </div>
-          <div className="grid grid-cols-3 gap-1">
+          <div className="grid grid-cols-4 gap-1">
             {[
               {k:"gemini",label:"Gemini",v:health.gemini},
               {k:"convex",label:"Convex",v:health.convex},
               {k:"email", label:"Email", v:health.email},
+              {k:"location",label:"Loc",v:!!userLocation&&locationEnabled},
             ].map(({k,label,v})=>(
               <div key={k} className="flex flex-col items-center rounded-lg py-1.5" style={{background:"var(--elevated)"}}>
                 <span className="text-[9px] font-semibold uppercase" style={{color:v?"var(--teal)":"var(--txt-3)"}}>{label}</span>
@@ -586,6 +604,50 @@ export default function AgentTester(){
             <p className="mt-1.5 text-[10px] leading-relaxed" style={{color:"var(--txt-3)"}}>
               Code change requests auto-run the SICA pipeline.
             </p>
+          )}
+        </div>
+
+        {/* location */}
+        <div className="mx-4 mb-4 rounded-xl p-3" style={{background:"var(--card)",border:`1px solid ${locationEnabled?"var(--teal)44":"var(--border-dim)"}`}}>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-[9px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>📍 Location</p>
+            <button type="button" role="switch" aria-checked={locationEnabled}
+              onClick={()=>{
+                if(!userLocation){ void detectUserLocation(); }
+                else setLocationEnabled(p=>!p);
+              }}
+              className="relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0"
+              style={{background:locationEnabled?"var(--teal)":"var(--elevated)"}}>
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-white shadow transition-transform"
+                style={{transform:locationEnabled?"translateX(14px)":"translateX(2px)"}}/>
+            </button>
+          </div>
+          {locationLoading && (
+            <p className="text-[10px]" style={{color:"var(--txt-3)"}}>Detecting…</p>
+          )}
+          {userLocation && !locationLoading && (
+            <div>
+              <p className="font-semibold text-[11px]" style={{color:locationEnabled?"var(--teal)":"var(--txt-3)"}}>
+                {[userLocation.city,userLocation.country].filter(Boolean).join(", ")||"Unknown"}
+              </p>
+              {userLocation.lat!=null && (
+                <p className="font-mono text-[9px] mt-0.5" style={{color:"var(--txt-3)"}}>
+                  {userLocation.lat.toFixed(3)}, {userLocation.lon?.toFixed(3)} · {userLocation.source}
+                </p>
+              )}
+              {locationEnabled && (
+                <p className="text-[9px] mt-1 leading-relaxed" style={{color:"var(--teal)"}}>
+                  Location-sensitive searches will use this context.
+                </p>
+              )}
+            </div>
+          )}
+          {!userLocation && !locationLoading && (
+            <button type="button" onClick={()=>void detectUserLocation()}
+              className="text-[10px] mt-0.5 transition hover:opacity-70"
+              style={{color:"var(--txt-3)"}}>
+              Click to detect location
+            </button>
           )}
         </div>
 
@@ -1242,6 +1304,7 @@ export default function AgentTester(){
                       ["GET","/api/v1/jobs"],["GET","/api/v1/jobs/:id"],
                       ["POST","/api/v1/research/trigger"],["GET","/api/v1/heartbeat/status"],
                       ["POST","/api/v1/sandbox/run"],["POST","/api/v1/notify/test"],
+                      ["GET","/api/v1/location"],
                     ] as [string,string][]).map(([method,path])=>(
                       <div key={path} className="flex items-center gap-2 rounded-xl px-3 py-2"
                         style={{background:"var(--card)"}}>

@@ -152,12 +152,27 @@ class SuperAgentOrchestrator:
             base += "\n## Directives\n" + preamble
         return base
 
-    def run(self, message: str, session_id: str | None = None, auto_improve: bool = False) -> ChatTurnResult:
+    def run(
+        self,
+        message: str,
+        session_id: str | None = None,
+        auto_improve: bool = False,
+        user_location: dict[str, object] | None = None,
+    ) -> ChatTurnResult:
         message = (message or "").strip()
         if not message:
             return ChatTurnResult(route="error", answer="Empty message.", intent="unknown")
 
         user_wants_email = _user_requested_email_reply(message)
+
+        # Enrich location-sensitive queries with the user's location context
+        from super_agent.app.services.location import enrich_query_with_location, format_location_for_prompt
+        effective_message = enrich_query_with_location(message, user_location)
+        location_hint = (
+            f"\n[User location: {format_location_for_prompt(user_location)}]\n"
+            if user_location and not user_location.get("error")
+            else ""
+        )
 
         session: Session | None = None
         if session_id:
@@ -169,12 +184,12 @@ class SuperAgentOrchestrator:
         )
         history = session.history_for_llm() if session else None
 
-        prior, sim, matched_fp = self._memory.retrieve(message)
+        prior, sim, matched_fp = self._memory.retrieve(effective_message)
         hdc_hint = ""
         if prior and sim > 0.2:
             hdc_hint = f"\n[Memory: similar prior answer (sim={sim:.3f}): {prior[:600]}]\n"
 
-        intent = classify_intent(message)
+        intent = classify_intent(effective_message)
         meta: dict[str, object] = {
             "preamble_chars": len(preamble),
             "hdc_similarity": sim,
@@ -182,14 +197,19 @@ class SuperAgentOrchestrator:
             "session_id": session_id,
             "date": _today_str(),
             "user_requested_email": user_wants_email,
+            "user_location": user_location,
         }
 
-        if auto_improve and self._gemini.enabled and _is_improve_intent(message):
-            result = self._run_with_improve(message, preamble, hdc_hint, meta, matched_fp, history)
+        # Append location hint into hdc_hint so it's visible to the LLM
+        if location_hint:
+            hdc_hint = location_hint + hdc_hint
+
+        if auto_improve and self._gemini.enabled and _is_improve_intent(effective_message):
+            result = self._run_with_improve(effective_message, preamble, hdc_hint, meta, matched_fp, history)
         elif intent == SymbolicIntent.SYMBOLIC:
-            result = self._run_symbolic(message, preamble, hdc_hint, meta, matched_fp, history)
+            result = self._run_symbolic(effective_message, preamble, hdc_hint, meta, matched_fp, history)
         else:
-            result = self._run_neural(message, preamble, hdc_hint, intent.value, meta, matched_fp, history)
+            result = self._run_neural(effective_message, preamble, hdc_hint, intent.value, meta, matched_fp, history)
 
         if session is not None:
             session.add("user", message)
