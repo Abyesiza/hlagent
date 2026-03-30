@@ -37,7 +37,7 @@ import type {
 // ── storage ───────────────────────────────────────────────────────────────────
 const STORAGE_API      = "hlagent-api-base";
 const STORAGE_MESSAGES = "hlagent-messages";
-const DEFAULT_BASE     = "http://localhost:8000";
+const DEFAULT_BASE     = (process.env.NEXT_PUBLIC_AGENT_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 function lsRead<T>(key: string, fb: T): T {
   try {

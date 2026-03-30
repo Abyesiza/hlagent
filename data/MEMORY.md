@@ -367,3 +367,8 @@ Researched 'Rhetoric' (2 queries): 28 docs, 39,089 words, 36959 n-gram pairs. Vo
 *2026-03-30 07:13 UTC*
 
 Researched 'Interpersonal communication' (2 queries): 25 docs, 37,402 words, 37677 n-gram pairs. Vocab: 16,698.
+
+## Research+Train: Communication theory
+*2026-03-30 08:08 UTC*
+
+Researched 'Communication theory' (2 queries): 24 docs, 28,980 words, 15370 n-gram pairs. Vocab: 5,370.
