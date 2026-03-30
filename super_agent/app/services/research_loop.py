@@ -1,3 +1,9 @@
+"""
+Research loop helpers — heartbeat topic management using the HDC research tool.
+
+Replaces the former Gemini-based research_loop. Now uses the web scraper and
+feeds results directly into the HDC training pipeline.
+"""
 from __future__ import annotations
 
 import json
@@ -5,11 +11,6 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-from super_agent.app.core.config import get_settings
-from super_agent.app.core.gemini_client import GeminiClient
-from super_agent.app.services import email_notify
-from super_agent.app.services.workspace_context import load_soul
 
 if TYPE_CHECKING:
     from super_agent.app.infrastructure.convex_store import ConvexAgentStore
@@ -28,12 +29,11 @@ def read_heartbeat_topics_file(data_dir: Path) -> list[str]:
         ln = ln.strip()
         if not ln or ln.startswith("#"):
             continue
-        # Only accept bullet-list lines (- or *); skip plain description text
         if ln.startswith(("-", "*")):
             t = ln.lstrip("-* ").strip()
             if t:
                 topics.append(t)
-    return topics[:20]
+    return topics[:100]
 
 
 def read_cursor_file(data_dir: Path) -> dict[str, object]:
@@ -50,13 +50,8 @@ def write_cursor_file(data_dir: Path, index: int, ts: str) -> None:
     cursor = read_cursor_file(data_dir)
     cursor["index"] = index
     cursor["last_run"] = ts
-    cursor["runs"] = int(cursor.get("runs", 0)) + 1  # type: ignore[arg-type]
+    cursor["runs"] = int(cursor.get("runs", 0)) + 1
     (data_dir / _CURSOR_FILE).write_text(json.dumps(cursor, indent=2), encoding="utf-8")
-
-
-def read_persona_file(data_dir: Path) -> str:
-    path = data_dir / "PERSONA.md"
-    return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
 
 
 def read_heartbeat_topics(
@@ -67,7 +62,7 @@ def read_heartbeat_topics(
     if convex is not None:
         convex.ensure_seeded_from_disk(data_dir)
         cfg = convex.get_research_config()
-        return list(cfg.get("topics") or [])[:20]
+        return list(cfg.get("topics") or [])[:100]
     return read_heartbeat_topics_file(data_dir)
 
 
@@ -102,42 +97,12 @@ def heartbeat_status(
     }
 
 
-def read_persona(
-    data_dir: Path,
-    *,
-    convex: "ConvexAgentStore | None" = None,
-) -> str:
-    if convex is not None:
-        convex.ensure_seeded_from_disk(data_dir)
-        cfg = convex.get_research_config()
-        return str(cfg.get("persona") or "").strip()
-    return read_persona_file(data_dir)
-
-
-def append_persona(
-    data_dir: Path,
-    persona_update: str,
-    *,
-    convex: "ConvexAgentStore | None" = None,
-) -> None:
-    if convex is not None:
-        convex.ensure_seeded_from_disk(data_dir)
-        convex.append_persona_block(persona_update)
-        return
-    path = data_dir / "PERSONA.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_file():
-        path.write_text(path.read_text(encoding="utf-8") + "\n\n" + persona_update.strip(), encoding="utf-8")
-    else:
-        path.write_text(f"# User Persona\n\n{persona_update.strip()}", encoding="utf-8")
-
-
 def append_memory(
     data_dir: Path,
     title: str,
     body: str,
     *,
-    convex: ConvexAgentStore | None = None,
+    convex: "ConvexAgentStore | None" = None,
 ) -> None:
     if convex is not None:
         convex.append_entry(title, body)
@@ -156,7 +121,7 @@ def read_memory(
     data_dir: Path,
     max_chars: int = 8000,
     *,
-    convex: ConvexAgentStore | None = None,
+    convex: "ConvexAgentStore | None" = None,
 ) -> str:
     if convex is not None:
         return convex.read_concatenated(max_chars)
@@ -170,7 +135,7 @@ def read_memory(
 def clear_memory(
     data_dir: Path,
     *,
-    convex: ConvexAgentStore | None = None,
+    convex: "ConvexAgentStore | None" = None,
 ) -> None:
     if convex is not None:
         convex.clear_all()
@@ -180,82 +145,99 @@ def clear_memory(
         path.write_text("# Agent Memory\n\n*Cleared.*\n", encoding="utf-8")
 
 
+def _expand_topic(topic: str, run_count: int) -> list[str]:
+    """
+    Return a list of query variants for a topic.
+
+    To defeat the deduplication cache (which correctly prevents re-training on
+    the *same* article), we rotate through progressively narrower sub-queries so
+    every heartbeat cycle fetches *different* articles for the same broad topic.
+    """
+    variants = [
+        topic,
+        f"{topic} introduction overview",
+        f"{topic} history origins",
+        f"{topic} applications examples",
+        f"{topic} latest research 2025",
+        f"{topic} tutorial explained",
+        f"{topic} advantages disadvantages",
+        f"{topic} comparison alternatives",
+    ]
+    return [variants[run_count % len(variants)], topic]
+
+
 def run_proactive_research(
-    gemini: GeminiClient,
     data_dir: Path,
+    lm: object,
     *,
-    convex: ConvexAgentStore | None = None,
+    convex: "ConvexAgentStore | None" = None,
+    max_pages: int = 5,
+    pipeline: object = None,
 ) -> str:
     """
-    Performs proactive research. Each call advances through the heartbeat topic list
-    (Convex or HEARTBEAT.md) in rotation. If no topics, falls back to persona-driven research.
+    Research the next heartbeat topic, train the HDC model, and persist state.
+
+    Accepts an optional *pipeline* (TrainingPipeline) to reuse the shared instance
+    so stats are visible at /train/status.  If not provided a fresh instance is
+    created (backward-compatible).
     """
-    if not gemini.enabled:
-        return "gemini disabled — research skipped"
+    from super_agent.app.domain.hdc_lm import HDCLanguageModel
+    from super_agent.app.services.research_tool import research_topic, DEFAULT_SEED_TOPICS
+    from super_agent.app.services.training_pipeline import TrainingPipeline
+
+    if not isinstance(lm, HDCLanguageModel):
+        return "No HDC language model available"
+
+    topics = read_heartbeat_topics(data_dir, convex=convex)
+    if not topics:
+        topics = DEFAULT_SEED_TOPICS
 
     if convex is not None:
         convex.ensure_seeded_from_disk(data_dir)
+        cfg = convex.get_research_config()
+        idx = int(cfg.get("cursorIndex", 0)) % len(topics)
+        run_count = int(cfg.get("totalRuns") or 0)
+    else:
+        cursor = read_cursor_file(data_dir)
+        idx = int(cursor.get("index", 0)) % len(topics)
+        run_count = int(cursor.get("runs", 0))
 
-    soul = load_soul(data_dir, max_chars=800)
-    topics = read_heartbeat_topics(data_dir, convex=convex)
-    persona_text = read_persona(data_dir, convex=convex)
+    topic = topics[idx]
+    next_idx = (idx + 1) % len(topics)
     ts = datetime.now(UTC).isoformat()
 
-    if topics:
-        if convex is not None:
-            cfg = convex.get_research_config()
-            idx = int(cfg.get("cursorIndex", 0)) % len(topics)
-        else:
-            cursor = read_cursor_file(data_dir)
-            idx = int(cursor.get("index", 0)) % len(topics)
-        topic = topics[idx]
-        next_idx = (idx + 1) % len(topics)
+    logger.info("Heartbeat[run=%d]: researching topic[%d/%d]: %s", run_count, idx + 1, len(topics), topic)
 
-        context_prefix = f"Considering the user's persona:\n{persona_text}\n\n" if persona_text else ""
-        prompt = (
-            f"{f'Directives:{chr(10)}{soul}{chr(10)}{chr(10)}' if soul else ''}"
-            f"{context_prefix}"
-            f"Research and write a concise summary (5–10 bullet points) about:\n\n**{topic}**\n\n"
-            "Focus on practical, actionable insights. Include specific tools, papers, or developments "
-            "that are relevant to someone building AI systems in 2026."
-        )
+    # Use the shared pipeline if provided, else create a local one
+    if not isinstance(pipeline, TrainingPipeline):
+        pipeline = TrainingPipeline(lm, data_dir, convex_store=convex)
 
-        report = gemini.generate_with_search(prompt)[0]
-        title = f"Research: {topic}"
-        append_memory(data_dir, title, report, convex=convex)
-        email_notify.notify_research_saved(
-            get_settings(),
-            title=title,
-            report=report,
-            source="proactive_research",
-        )
-        if convex is not None:
-            convex.record_research_run(next_idx, ts)
-        else:
-            write_cursor_file(data_dir, next_idx, ts)
-        logger.info("heartbeat: researched topic[%d/%d]: %s", idx + 1, len(topics), topic)
-        return f"researched ({idx + 1}/{len(topics)}): {topic}"
+    # Expand into sub-queries to get fresh articles past the dedup cache
+    queries = _expand_topic(topic, run_count)
+    total_pairs = 0
+    total_docs = 0
+    total_words = 0
 
-    if persona_text:
-        prompt = (
-            f"{f'Directives:{chr(10)}{soul}{chr(10)}{chr(10)}' if soul else ''}"
-            f"Research recent advancements relevant to this persona:\n{persona_text}\n\n"
-            "Be concise; bullet points."
-        )
-        report = gemini.generate_with_search(prompt)[0]
-        title = "Persona-driven Research"
-        append_memory(data_dir, title, report, convex=convex)
-        email_notify.notify_research_saved(
-            get_settings(),
-            title=title,
-            report=report,
-            source="persona_research",
-        )
-        if convex is not None:
-            convex.record_research_run(0, ts)
-        else:
-            write_cursor_file(data_dir, 0, ts)
-        logger.info("heartbeat: persona-driven research complete")
-        return "persona-driven research stored"
+    for query in queries:
+        result = research_topic(query, max_pages=max_pages)
+        pairs = pipeline.train_result(result)
+        total_pairs += pairs
+        total_docs += len(result.documents)
+        total_words += result.total_words
 
-    return "no topics in HEARTBEAT.md and no persona — nothing researched"
+    # Save checkpoint after every heartbeat cycle
+    pipeline._checkpoint()
+
+    summary = (
+        f"Researched '{topic}' ({len(queries)} queries): "
+        f"{total_docs} docs, {total_words:,} words, "
+        f"{total_pairs} n-gram pairs. Vocab: {lm.stats.vocab_size:,}."
+    )
+    append_memory(data_dir, f"Research+Train: {topic}", summary, convex=convex)
+
+    if convex is not None:
+        convex.record_research_run(next_idx, ts)
+    else:
+        write_cursor_file(data_dir, next_idx, ts)
+
+    return f"trained ({idx + 1}/{len(topics)}): {topic} — {total_pairs} pairs, vocab={lm.stats.vocab_size:,}"

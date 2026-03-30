@@ -1,30 +1,11 @@
-/** Mirrors `super_agent.app.domain.chat_schemas.ChatTurnResult` JSON. */
+// HDC Super-Agent — shared TypeScript types
 
 export type ChatTurnResult = {
-  route: "symbolic" | "neural" | "error";
-  intent: string;
   answer: string;
-  sympy: Record<string, unknown> | null;
-  hdc_similarity: number | null;
-  hdc_matched_task: string | null;
-  context_snippet: string;
-  grounded: boolean;
+  mode: "generation" | "math" | "analogy" | "similarity" | "research" | "error";
+  confidence: number;
   session_id: string | null;
-  metadata: Record<string, unknown>;
-};
-
-export type BlueprintItem = {
-  id: string;
-  title: string;
-  status: "done" | "partial" | "todo";
-  notes: string;
-};
-
-export type BlueprintGap = BlueprintItem;
-
-export type BlueprintSnapshot = {
-  version: number;
-  items: BlueprintItem[];
+  details: Record<string, unknown>;
 };
 
 export type ChatMessage = {
@@ -36,48 +17,36 @@ export type ChatMessage = {
   at: number;
 };
 
-export type FileChange = {
-  file: string;
-  action: string;
-  reason: string;
-  old_code: string;
-  new_code: string;
-  ast_ok: boolean;
-  committed: boolean;
-  commit_hash: string | null;
-  error: string | null;
+export type ModelStats = {
+  model: string;
+  vocab_size: number;
+  training_tokens: number;
+  training_docs: number;
+  assoc_memory: number;
+  last_trained: string | null;
+  hdc_memory_records: number;
+  convex_connected: boolean;
 };
 
-export type ImproveRequest = {
-  instruction: string;
-  target_file?: string;
-};
-
-export type ImproveResult = {
-  ok: boolean;
-  target_file: string;
-  instruction: string;
-  old_code: string;
-  new_code: string;
-  ast_ok: boolean;
-  committed: boolean;
-  commit_hash: string | null;
-  error: string | null;
-  timestamp: string;
-  file_changes: FileChange[];
-};
-
-export type ImprovementHistory = {
-  entries: ImproveResult[];
-};
-
-export type FullStackImproveResult = {
-  ok: boolean;
-  instruction: string;
-  backend: ImproveResult;
-  frontend_api: ImproveResult | null;
-  frontend_ui: ImproveResult | null;
-  timestamp: string;
+export type PipelineStats = {
+  pipeline: {
+    documents_trained: number;
+    documents_skipped: number;
+    tokens_trained: number;
+    research_runs: number;
+    unique_docs_seen: number;
+    last_run: string;
+    recent_errors: string[];
+  };
+  model: {
+    vocab_size: number;
+    training_tokens: number;
+    training_docs: number;
+    assoc_memory_size: number;
+    dim: number;
+    context_size: number;
+    last_trained: string;
+  };
 };
 
 export type HeartbeatStatus = {
@@ -87,5 +56,56 @@ export type HeartbeatStatus = {
   next_topic_index: number;
   next_topic: string | null;
   topics: string[];
-  interval_seconds: number;
+};
+
+export type VocabResponse = {
+  vocab_size: number;
+  sample: string[];
+};
+
+export type AnalogyCandidate = {
+  word: string;
+  similarity: number;
+};
+
+export type AnalogyResult = {
+  query: string;
+  candidates: AnalogyCandidate[];
+  best: string | null;
+};
+
+export type SimilarResult = {
+  word: string;
+  similar: AnalogyCandidate[];
+};
+
+export type GenerateResult = {
+  seed: string;
+  generated: string;
+  full_text: string;
+};
+
+export type MemoryRecord = {
+  task_fp: string;
+  solution_preview: string;
+  route: string;
+  retrieval_count: number;
+};
+
+export type MemoryResponse = {
+  records: MemoryRecord[];
+  stats: {
+    total_records: number;
+    by_route: Record<string, number>;
+    torchhd_available: boolean;
+    dim: number;
+  };
+};
+
+export type HealthCheck = {
+  ok: boolean;
+  model?: string;
+  hdc_dim?: number;
+  convex_configured?: boolean;
+  detail?: string;
 };

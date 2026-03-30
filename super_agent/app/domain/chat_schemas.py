@@ -1,66 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from super_agent.app.domain.math_schemas import SymCodeResult
-
 
 class ChatTurnResult(BaseModel):
-    """Single end-to-end turn: routing + symbolic or neural output + optional memory hit."""
+    """Single end-to-end chat turn result."""
 
-    route: Literal["symbolic", "neural", "error"] = "neural"
-    intent: str = ""
+    mode: str = "generation"    # "generation" | "math" | "analogy" | "similarity" | "research" | "error"
     answer: str = ""
-    sympy: SymCodeResult | None = None
-    hdc_similarity: float | None = None
-    hdc_matched_task: str | None = None
-    context_snippet: str = ""
-    grounded: bool = False
+    confidence: float = 0.0
     session_id: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ImproveRequest(BaseModel):
-    instruction: str
-    target_file: str | None = None
-
-
-class FileChange(BaseModel):
-    """A single file modified or created during an improvement."""
-    file: str
-    action: str = "modify"   # "modify" | "create"
-    reason: str = ""
-    old_code: str = ""
-    new_code: str = ""
-    ast_ok: bool = False
-    committed: bool = False
-    commit_hash: str | None = None
-    error: str | None = None
-
-
-class ImproveResult(BaseModel):
-    ok: bool
-    target_file: str
-    instruction: str
-    old_code: str = ""
-    new_code: str = ""
-    ast_ok: bool = False
-    committed: bool = False
-    commit_hash: str | None = None
-    error: str | None = None
-    timestamp: str = ""
-    # multi-file support: additional files changed in the same operation
-    file_changes: list[FileChange] = Field(default_factory=list)
-
-
-class FullStackImproveResult(BaseModel):
-    """Wraps a backend + optional frontend improvement applied in one operation."""
-
-    ok: bool
-    instruction: str
-    backend: ImproveResult
-    frontend_api: ImproveResult | None = None   # changes to nextjstester/lib/agent-api.ts
-    frontend_ui: ImproveResult | None = None    # changes to nextjstester/app/components/AgentTester.tsx
-    timestamp: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)

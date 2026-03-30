@@ -287,3 +287,83 @@ Here's a concise summary of open-source LLM agents that can write and test their
 *   **Multi-Agent Systems Enable Complex Workflows:** Platforms like AutoGen Studio facilitate the creation of collaborative multi-agent teams (e.g., a "Requirement Analyst" working with a "TestCaseGenerator") to automate entire testing and development workflows, mimicking human team dynamics.
 *   **Focus on Production Readiness and Human Oversight:** Practical applications in 2026 emphasize reliability, safety, and seamless workflow integration. Coding agents like Cline operate within Integrated Development Environments (IDEs) such as VS Code, keeping agent actions visible and reviewable for human supervision.
 *   **Growing Trend Towards Open-Weight and Self-Hostable Models:** The availability of open-weight LLMs and tools like vLLM for efficient inference allows developers to self-host coding agents, providing greater control, transparency, and cost-effectiveness compared to relying solely on proprietary APIs.
+
+## Research+Train: State of the art AI coding agents in 2026 (Aider, SWE-agent, OpenHands, Cursor, Gemini CLI)
+*2026-03-30 04:26 UTC*
+
+Researched and trained on 'State of the art AI coding agents in 2026 (Aider, SWE-agent, OpenHands, Cursor, Gemini CLI)': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: Self-improving coding agents: SICA paper findings and benchmark results
+*2026-03-30 04:31 UTC*
+
+Researched and trained on 'Self-improving coding agents: SICA paper findings and benchmark results': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: Multi-file codebase editing strategies used by LLM agents
+*2026-03-30 04:37 UTC*
+
+Researched and trained on 'Multi-file codebase editing strategies used by LLM agents': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: Latest Gemini API features, model updates, and rate limit changes (2026)
+*2026-03-30 04:42 UTC*
+
+Researched and trained on 'Latest Gemini API features, model updates, and rate limit changes (2026)': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: Neuro-symbolic AI and vector symbolic architectures advances
+*2026-03-30 04:47 UTC*
+
+Researched and trained on 'Neuro-symbolic AI and vector symbolic architectures advances': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: FastAPI async performance patterns and best practices
+*2026-03-30 04:49 UTC*
+
+Researched and trained on 'FastAPI async performance patterns and best practices': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: Hyperdimensional computing applications in AI memory systems
+*2026-03-30 04:52 UTC*
+
+Researched and trained on 'Hyperdimensional computing applications in AI memory systems': 0 docs, 0 words, 0 n-gram pairs. Vocab: 126.
+
+## Research+Train: Open-source LLM agents that can write and test their own code
+*2026-03-30 04:58 UTC*
+
+Researched and trained on 'Open-source LLM agents that can write and test their own code': 11 docs, 885 words, 1012 n-gram pairs. Vocab: 353.
+
+## Research+Train: State of the art AI coding agents in 2026 (Aider, SWE-agent, OpenHands, Cursor, Gemini CLI)
+*2026-03-30 05:03 UTC*
+
+Researched and trained on 'State of the art AI coding agents in 2026 (Aider, SWE-agent, OpenHands, Cursor, Gemini CLI)': 9 docs, 464 words, 574 n-gram pairs. Vocab: 487.
+
+## Research+Train: Artificial intelligence
+*2026-03-30 05:41 UTC*
+
+Researched 'Artificial intelligence' (2 queries): 26 docs, 39,573 words, 24678 n-gram pairs. Vocab: 8,952.
+
+## Research+Train: Natural language processing
+*2026-03-30 05:52 UTC*
+
+Researched 'Natural language processing' (2 queries): 25 docs, 41,390 words, 44633 n-gram pairs. Vocab: 11,431.
+
+## Research+Train: Neural networks
+*2026-03-30 06:01 UTC*
+
+Researched 'Neural networks' (2 queries): 25 docs, 22,766 words, 27749 n-gram pairs. Vocab: 12,295.
+
+## Research+Train: Pragmatics
+*2026-03-30 06:39 UTC*
+
+Researched 'Pragmatics' (2 queries): 24 docs, 43,035 words, 14495 n-gram pairs. Vocab: 13,980.
+
+## Research+Train: Discourse analysis
+*2026-03-30 06:59 UTC*
+
+Researched 'Discourse analysis' (2 queries): 21 docs, 6,586 words, 3975 n-gram pairs. Vocab: 14,530.
+
+## Research+Train: Rhetoric
+*2026-03-30 07:05 UTC*
+
+Researched 'Rhetoric' (2 queries): 28 docs, 39,089 words, 36959 n-gram pairs. Vocab: 15,857.
+
+## Research+Train: Interpersonal communication
+*2026-03-30 07:13 UTC*
+
+Researched 'Interpersonal communication' (2 queries): 25 docs, 37,402 words, 37677 n-gram pairs. Vocab: 16,698.

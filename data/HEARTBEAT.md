@@ -1,12 +1,52 @@
-# Heartbeat topics
+# HDC Research Topics
 
-The agent researches these topics in rotation on each heartbeat tick.
-
-- State of the art AI coding agents in 2026 (Aider, SWE-agent, OpenHands, Cursor, Gemini CLI)
-- Self-improving coding agents: SICA paper findings and benchmark results
-- Multi-file codebase editing strategies used by LLM agents
-- Latest Gemini API features, model updates, and rate limit changes (2026)
-- Neuro-symbolic AI and vector symbolic architectures advances
-- FastAPI async performance patterns and best practices
-- Hyperdimensional computing applications in AI memory systems
-- Open-source LLM agents that can write and test their own code
+- Human communication
+- Verbal communication
+- Nonverbal communication
+- Conversation analysis
+- Pragmatics
+- Discourse analysis
+- Rhetoric
+- Interpersonal communication
+- Communication theory
+- Semiotics
+- Narrative
+- Dialogue
+- Sociolinguistics
+- Social construct
+- Social norm
+- Culture
+- Social psychology
+- Group dynamics
+- Identity
+- Emotion
+- Emotional intelligence
+- Empathy
+- Trust
+- Cooperation
+- Ethics
+- Morality
+- Community
+- Semantics
+- Linguistics
+- Cognitive linguistics
+- Language acquisition
+- Metaphor
+- Figurative language
+- Context
+- Storytelling
+- Frame semantics
+- Philosophy of language
+- Machine learning
+- Artificial intelligence
+- Natural language processing
+- Neural networks
+- Cognitive science
+- Neuroscience
+- Consciousness
+- Memory
+- Attention
+- Mathematics
+- Statistics
+- Hyperdimensional computing
+- Knowledge representation

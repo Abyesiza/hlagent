@@ -10,5 +10,6 @@ build/
 .env
 *.log
 sandbox/workspace/
+venv/
 
 .env.local

@@ -1,1 +1,17 @@
 uvicorn super_agent.app.main:app --reload
+
+# Activate venv
+source venv/bin/activate
+
+# Run server (hot-reload)
+uvicorn super_agent.app.main:app --reload
+
+# Run tests (19/19 pass)
+venv/bin/pytest tests/test_smoke.py -v
+
+# Trigger research + training NOW (picks next heartbeat topic)
+curl -X POST http://localhost:8000/heartbeat/run
+
+# Train on your own text
+curl -X POST http://localhost:8000/train/text -H "Content-Type: application/json" \
+  -d '{"text": "your training text here"}'

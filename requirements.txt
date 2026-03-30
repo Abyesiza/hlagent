@@ -1,4 +1,4 @@
-# Super Agent — FastAPI backend dependencies
+# HDC Super-Agent — FastAPI backend dependencies
 # Install with: pip install -r requirements.txt
 
 # ── web framework ─────────────────────────────────────────────────────────────
@@ -13,26 +13,30 @@ pydantic-settings==2.13.1
 pydantic-extra-types==2.11.1
 python-dotenv==1.2.2
 
-# ── AI / LLM ─────────────────────────────────────────────────────────────────
-google-genai==1.68.0
-google-auth==2.49.1
-
-# ── scheduling (heartbeat) ────────────────────────────────────────────────────
+# ── scheduling (continuous learning heartbeat) ────────────────────────────────
 APScheduler==3.11.2
 tzlocal==5.3.1
 
-# ── symbolic math ─────────────────────────────────────────────────────────────
+# ── symbolic math (reasoning engine) ─────────────────────────────────────────
 sympy==1.14.0
 mpmath==1.3.0
 
-# ── numeric / HDC memory ──────────────────────────────────────────────────────
+# ── numeric / HDC core ────────────────────────────────────────────────────────
 numpy==2.4.3
 
-# ── HTTP client ───────────────────────────────────────────────────────────────
+# ── web scraping / research tool ──────────────────────────────────────────────
 httpx==0.28.1
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+trafilatura>=2.0.0
+duckduckgo-search>=7.0.0
+ddgs>=0.1.0
 
-# ── Convex (research MEMORY + task ledger) ────────────────────────────────────
+# ── Convex (training logs, memory, task ledger) ───────────────────────────────
 convex>=0.6.0
+
+# ── optional: GPU-accelerated HDC (install separately if GPU available) ───────
+# torchhd>=0.3.0
 
 # ── testing ───────────────────────────────────────────────────────────────────
 pytest==9.0.2

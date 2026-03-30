@@ -1,1654 +1,1458 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const _convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
-const ResearchTabLive = _convexUrl
-  ? dynamic(() => import("./ResearchTabLive"), { ssr: false })
-  : null;
-const DataBackground = dynamic(() => import("./DataBackground"), { ssr: false });
-
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  clearResearchMemory,
-  detectLocation,
-  fetchBlueprint,
-  fetchCodebaseSnapshot,
   fetchHealth,
+  fetchModelStats,
+  fetchTrainStatus,
+  fetchVocab,
   fetchHeartbeatStatus,
-  fetchImprovements,
-  fetchResearchMemory,
-  fetchSicaStatus,
-  fetchSicaSummary,
-  getAgentBaseUrl,
-  getAgentJob,
-  getOrCreateSessionId,
-  listJobs,
+  fetchMemory,
   postChat,
-  refreshCodebase,
-  requestFullStackImprovement,
-  requestImprovement,
-  resetSessionId,
-  runSandbox,
-  runSicaCycle,
+  trainText,
+  trainTopic,
+  generate,
+  solveAnalogy,
+  findSimilar,
   setHeartbeatTopics,
-  startAgentJob,
-  triggerResearch,
+  triggerHeartbeat,
+  researchTopic,
+  getAgentBaseUrl,
+  getOrCreateSessionId,
+  resetSessionId,
 } from "@/lib/agent-api";
-import type { AgentJobSummary, LocationData, SicaStatus } from "@/lib/agent-api";
 import type {
-  BlueprintSnapshot,
   ChatMessage,
-  ChatTurnResult,
-  FullStackImproveResult,
+  ModelStats,
+  PipelineStats,
   HeartbeatStatus,
-  ImprovementHistory,
-  ImproveResult,
+  VocabResponse,
+  MemoryResponse,
+  AnalogyResult,
+  SimilarResult,
+  GenerateResult,
+  HealthCheck,
 } from "@/lib/types";
 
-// ─── storage ─────────────────────────────────────────────────────────────────
-const STORAGE_MESSAGES = "hlagent-messages";
+// ── storage ───────────────────────────────────────────────────────────────────
 const STORAGE_API      = "hlagent-api-base";
-const STORAGE_AUTO     = "hlagent-auto-improve";
+const STORAGE_MESSAGES = "hlagent-messages";
+const DEFAULT_BASE     = "http://localhost:8000";
 
-const EMPTY_TURN: ChatTurnResult = {
-  route:"error", intent:"", answer:"", sympy:null,
-  hdc_similarity:null, hdc_matched_task:null, context_snippet:"",
-  grounded:false, session_id:null, metadata:{},
+function lsRead<T>(key: string, fb: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? (JSON.parse(v) as T) : fb;
+  } catch { return fb; }
+}
+
+function lsWrite(key: string, value: unknown): void {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function fmt(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "never";
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+const MODE_COLOR: Record<string, string> = {
+  generation:       "var(--cyan)",
+  learning:         "var(--amber)",   // still training — amber = "work in progress"
+  math:             "var(--green)",
+  analogy:          "var(--violet)",
+  similarity:       "var(--teal)",
+  research:         "var(--blue)",
+  error:            "var(--red)",
+  chain_of_thought: "var(--blue)",
+  busy:             "var(--txt-3)",
 };
 
-function ls<T>(key:string, fb:T):T {
-  if (typeof window==="undefined") return fb;
-  try { const v=localStorage.getItem(key); return v!=null?(JSON.parse(v) as T):fb; } catch { return fb; }
-}
-function lsSet(key:string, v:unknown) {
-  try { localStorage.setItem(key,JSON.stringify(v)); } catch {/**/}
-}
-function loadMessages():ChatMessage[] {
-  const p=ls<ChatMessage[]>(STORAGE_MESSAGES,[]);
-  return Array.isArray(p)?p:[];
-}
-function saveMessages(msgs:ChatMessage[]) { lsSet(STORAGE_MESSAGES,msgs.slice(-200)); }
-function fmtTime(at:number){ return new Date(at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); }
-function fmtTs(iso:string){ try{return new Date(iso).toLocaleString();}catch{return iso;} }
-function fmtRelative(iso:string|null|undefined):string {
-  if(!iso) return "never";
-  const diff=Date.now()-new Date(iso).getTime();
-  if(diff<60_000) return "just now";
-  if(diff<3_600_000) return `${Math.floor(diff/60_000)}m ago`;
-  if(diff<86_400_000) return `${Math.floor(diff/3_600_000)}h ago`;
-  return new Date(iso).toLocaleDateString();
+const MODE_LABEL: Record<string, string> = {
+  generation: "generated",
+  learning:   "still learning",
+  math:       "math",
+  analogy:    "analogy",
+  similarity: "similar",
+  research:   "researched",
+  error:      "error",
+  chain_of_thought: "chain",
+  busy:       "busy",
+};
+
+// ── animated counter ──────────────────────────────────────────────────────────
+function useAnimatedValue(target: number, duration = 600): number {
+  const [display, setDisplay] = useState(target);
+  const prev = useRef(target);
+  useEffect(() => {
+    if (prev.current === target) return;
+    const start = prev.current;
+    const diff = target - start;
+    const t0 = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - t0;
+      const prog = Math.min(elapsed / duration, 1);
+      setDisplay(Math.round(start + diff * prog));
+      if (prog < 1) requestAnimationFrame(tick);
+      else prev.current = target;
+    };
+    requestAnimationFrame(tick);
+  }, [target, duration]);
+  return display;
 }
 
-// ─── markdown renderer ────────────────────────────────────────────────────────
-type Seg = {type:"code";lang:string;text:string}|{type:"text";text:string};
-function parseSegs(raw:string):Seg[] {
-  const segs:Seg[]=[];
-  const fence=/^```(\w*)\n([\s\S]*?)^```/gm;
-  let last=0, m;
-  while((m=fence.exec(raw))!==null){
-    if(m.index>last) segs.push({type:"text",text:raw.slice(last,m.index)});
-    segs.push({type:"code",lang:m[1]||"",text:m[2]});
-    last=m.index+m[0].length;
-  }
-  if(last<raw.length) segs.push({type:"text",text:raw.slice(last)});
-  return segs;
-}
-function renderText(t:string){
-  return t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g,"<em>$1</em>")
-    .replace(/`([^`]+)`/g,'<code class="inline-code">$1</code>');
-}
-function MarkdownMessage({text}:{text:string}){
-  const segs=useMemo(()=>parseSegs(text),[text]);
+// ── stat card ─────────────────────────────────────────────────────────────────
+function StatCard({
+  label, value, sub, color, glow,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  color?: string;
+  glow?: boolean;
+}) {
   return (
-    <div className="msg-content text-sm leading-relaxed">
-      {segs.map((s,i)=>
-        s.type==="code"
-          ? <pre key={i} className="my-2 overflow-x-auto rounded-lg p-3 font-mono text-[11px] leading-relaxed" style={{background:"var(--void)",color:"#a8e8b8",border:"1px solid var(--border-dim)"}}><code>{s.text}</code></pre>
-          : <span key={i} dangerouslySetInnerHTML={{__html:renderText(s.text).replace(/\n/g,"<br/>")}} />
-      )}
-    </div>
-  );
-}
-
-// ─── micro components ──────────────────────────────────────────────────────────
-
-function StatusDot({status}:{status:"ok"|"down"|"checking"}){
-  const color=status==="ok"?"var(--green)":status==="down"?"var(--red)":"var(--amber)";
-  const cls=status==="ok"?"dot-live":status==="checking"?"dot-amber":"";
-  return (
-    <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${cls}`}
-      style={{background:color}} />
-  );
-}
-
-function Pill({label,color="blue"}:{label:string;color?:"blue"|"green"|"cyan"|"amber"|"red"|"violet"|"teal"}){
-  const map={blue:"var(--blue)",green:"var(--green)",cyan:"var(--cyan)",amber:"var(--amber)",red:"var(--red)",violet:"var(--violet)",teal:"var(--teal)"};
-  const c=map[color];
-  return (
-    <span className="rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-      style={{background:`${c}22`,color:c,border:`1px solid ${c}44`}}>
-      {label}
-    </span>
-  );
-}
-
-function NavItem({id,label,icon,active,badge,onClick}:{
-  id:string;label:string;icon:string;active:boolean;badge?:number;onClick:()=>void;
-}){
-  return (
-    <button type="button" onClick={onClick}
-      className="relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-all"
+    <div
       style={{
-        background:active?"var(--elevated)":"transparent",
-        color:active?"var(--cyan)":"var(--txt-2)",
-        borderLeft:active?"2px solid var(--cyan)":"2px solid transparent",
-      }}>
-      <span className="text-base leading-none">{icon}</span>
-      <span>{label}</span>
-      {badge!=null && badge>0 && (
-        <span className="ml-auto rounded-full px-1.5 py-0.5 text-[9px] font-bold"
-          style={{background:"var(--blue)",color:"#fff"}}>
-          {badge}
-        </span>
-      )}
-    </button>
+        background: "var(--card)",
+        border: `1px solid ${glow ? color ?? "var(--border)" : "var(--border-dim)"}`,
+        borderRadius: 10,
+        padding: "14px 16px",
+        boxShadow: glow ? `0 0 18px ${color ?? "var(--cyan)"}33` : undefined,
+        transition: "border-color .3s, box-shadow .3s",
+      }}
+    >
+      <div style={{ fontSize: 11, color: "var(--txt-2)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: color ?? "var(--txt)", fontFamily: "var(--font-mono)", lineHeight: 1 }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: "var(--txt-3)", marginTop: 4 }}>{sub}</div>}
+    </div>
   );
 }
 
-function MobileNavItem({id,label,icon,active,badge,onClick}:{
-  id:string;label:string;icon:string;active:boolean;badge?:number;onClick:()=>void;
-}){
+// ── confidence bar ────────────────────────────────────────────────────────────
+function ConfBar({ value, color }: { value: number; color: string }) {
   return (
-    <button type="button" onClick={onClick}
-      className="relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 transition-all"
-      style={{color:active?"var(--cyan)":"var(--txt-3)"}}>
-      <span className="text-lg leading-none">{icon}</span>
-      <span className="text-[9px] font-medium">{label}</span>
-      {badge!=null && badge>0 && (
-        <span className="absolute right-2 top-1 rounded-full px-1 text-[8px] font-bold"
-          style={{background:"var(--blue)",color:"#fff"}}>
-          {badge}
-        </span>
-      )}
-      {active && (
-        <span className="absolute bottom-0 left-1/2 h-0.5 w-4 -translate-x-1/2 rounded-full"
-          style={{background:"var(--cyan)"}} />
-      )}
-    </button>
+    <div style={{ height: 3, background: "var(--elevated)", borderRadius: 2, overflow: "hidden", marginTop: 4 }}>
+      <div
+        style={{
+          height: "100%",
+          width: `${Math.min(value * 100, 100)}%`,
+          background: color,
+          borderRadius: 2,
+          transition: "width .4s",
+        }}
+      />
+    </div>
   );
 }
 
-function ThinkingAnim({stage}:{stage:string}){
+// ── similarity pill ───────────────────────────────────────────────────────────
+function SimPill({ word, similarity }: { word: string; similarity: number }) {
+  const pct = Math.round(similarity * 100);
+  const hue = Math.round(120 * similarity);
   return (
-    <div className="flex items-center gap-3 rounded-2xl px-4 py-3 slide-up"
-      style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
-      <span className="flex gap-1">
-        {[0,1,2].map(i=>(
-          <span key={i} className="neural-dot h-1.5 w-1.5 rounded-full"
-            style={{background:"var(--cyan)"}} />
-        ))}
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "6px 10px",
+        background: "var(--elevated)",
+        border: "1px solid var(--border-dim)",
+        borderRadius: 8,
+        fontSize: 13,
+        gap: 12,
+      }}
+    >
+      <span style={{ color: "var(--txt)", fontFamily: "var(--font-mono)" }}>{word}</span>
+      <span style={{ color: `hsl(${hue},70%,60%)`, fontFamily: "var(--font-mono)", fontSize: 11 }}>
+        {pct}%
       </span>
-      <span className="text-xs" style={{color:"var(--txt-2)"}}>{stage}…</span>
     </div>
   );
 }
 
-function InlineImproveCard({r}:{r:ImproveResult}){
-  const changes=r.file_changes?.length
-    ? r.file_changes
-    : [{file:r.target_file,new_code:r.new_code,error:r.error,committed:r.committed,commit_hash:r.commit_hash,reason:"",ast_ok:r.ast_ok}];
+// ── chat bubble ───────────────────────────────────────────────────────────────
+function ChatBubble({ msg }: { msg: ChatMessage }) {
+  const isUser = msg.role === "user";
+  const mode = msg.turn?.mode ?? "generation";
+  const conf = msg.turn?.confidence ?? 0;
+  const color = MODE_COLOR[mode] ?? "var(--cyan)";
   return (
-    <div className="mt-2 rounded-xl overflow-hidden slide-up"
-      style={{border:`1px solid ${r.ok?"var(--teal)44":"var(--red)44"}`,background:r.ok?"rgba(0,184,144,0.05)":"rgba(255,69,102,0.05)"}}>
-      <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold"
-        style={{borderBottom:"1px solid var(--border-dim)",color:r.ok?"var(--teal)":"var(--red)"}}>
-        <span>{r.ok?"⟳ Applied":"✗ Failed"}</span>
-        <span className="ml-auto font-mono text-[9px]" style={{color:"var(--txt-3)"}}>
-          {fmtTs(r.timestamp)}
-        </span>
-      </div>
-      {changes.map((fc,i)=>(
-        <div key={i} className="px-3 py-2 text-[11px]" style={{borderBottom:"1px solid var(--border-dim)"}}>
-          <div className="flex flex-wrap items-center gap-2">
-            <span style={{color:fc.error?"var(--red)":"var(--teal)"}}>{fc.error?"✗":"✓"}</span>
-            <code className="font-mono" style={{color:"var(--txt-2)"}}>{fc.file}</code>
-            {fc.committed && <Pill label={(fc.commit_hash as string|null)?.slice(0,8)||"committed"} color="blue"/>}
-          </div>
-          {fc.error && <p className="mt-1" style={{color:"var(--red)"}}>{fc.error}</p>}
-          {fc.new_code && !fc.error && (
-            <details className="mt-1.5">
-              <summary className="cursor-pointer text-[10px]" style={{color:"var(--txt-3)"}}>
-                Show code ({(fc.new_code as string).split("\n").length} lines)
-              </summary>
-              <pre className="mt-1 max-h-40 overflow-auto rounded-lg p-2 font-mono text-[10px]"
-                style={{background:"var(--void)",color:"#a8e8b8"}}>
-                {fc.new_code as string}
-              </pre>
-            </details>
-          )}
+    <div
+      className="slide-up"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: isUser ? "flex-end" : "flex-start",
+        marginBottom: 12,
+      }}
+    >
+      {!isUser && (
+        <div style={{ fontSize: 10, color: "var(--txt-3)", marginBottom: 3, display: "flex", gap: 8, alignItems: "center" }}>
+          <span
+            style={{
+              color,
+              background: `${color}1a`,
+              border: `1px solid ${color}44`,
+              borderRadius: 4,
+              padding: "1px 6px",
+              fontSize: 10,
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {MODE_LABEL[mode] ?? mode}
+          </span>
+          <span style={{ color: conf < 0.05 ? "var(--amber)" : "var(--txt-3)" }}>
+            {conf > 0 ? `conf ${(conf * 100).toFixed(1)}%` : "building…"}
+          </span>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function InlineFullStackCard({r}:{r:FullStackImproveResult}){
-  return (
-    <div className="mt-2 rounded-xl overflow-hidden slide-up"
-      style={{border:`1px solid ${r.ok?"var(--violet)44":"var(--red)44"}`,background:r.ok?"rgba(139,92,246,0.05)":"rgba(255,69,102,0.05)"}}>
-      <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold"
-        style={{borderBottom:"1px solid var(--border-dim)",color:r.ok?"var(--violet)":"var(--red)"}}>
-        <span>{r.ok?"⚡ Full-stack applied":"✗ Failed"}</span>
-        <span className="ml-auto font-mono text-[9px]" style={{color:"var(--txt-3)"}}>{fmtTs(r.timestamp)}</span>
+      )}
+      <div
+        style={{
+          maxWidth: "82%",
+          padding: "10px 14px",
+          borderRadius: isUser ? "14px 14px 4px 14px" : "4px 14px 14px 14px",
+          background: isUser ? "var(--blue)" : "var(--elevated)",
+          border: isUser ? "none" : `1px solid var(--border-dim)`,
+          color: "var(--txt)",
+          fontSize: 14,
+          lineHeight: 1.6,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        {msg.content}
+        {msg.error && <div style={{ color: "var(--red)", fontSize: 12, marginTop: 6 }}>{msg.error}</div>}
       </div>
-      {([
-        {key:"backend" as const,label:"Backend",icon:"🐍"},
-        {key:"frontend_api" as const,label:"API client",icon:"🔌"},
-        {key:"frontend_ui" as const,label:"UI",icon:"🖥"},
-      ] as const).map(({key,label,icon})=>{
-        const sub=r[key]; if(!sub) return null;
-        return (
-          <div key={key} className="flex items-center gap-2 px-3 py-2 text-[11px]"
-            style={{borderBottom:"1px solid var(--border-dim)"}}>
-            <span>{icon}</span>
-            <code className="font-mono" style={{color:"var(--txt-2)"}}>{sub.target_file}</code>
-            <span className="ml-auto" style={{color:sub.ok?"var(--teal)":"var(--red)"}}>{sub.ok?"✓":"✗"}</span>
-          </div>
-        );
-      })}
+      {!isUser && conf > 0 && <ConfBar value={conf} color={color} />}
     </div>
   );
 }
 
-// ─── suggestion chips ──────────────────────────────────────────────────────────
-const SUGGESTIONS=[
-  "What's your current architecture?","What AI news is happening today?",
-  "Research the latest on Gemini 2.5 capabilities","What is 2 + 2 using SymPy?",
-  "Improve the HDC memory retrieval","Add a /api/v1/sessions list endpoint",
-];
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
 
-type Tab="chat"|"research"|"improve"|"codebase"|"status";
-type ThinkingStage="thinking"|"searching"|"writing code"|"applying";
+type Tab = "chat" | "brain" | "research" | "generate";
 
-// ─── main component ─────────────────────────────────────────────────────────────
-export default function AgentTester(){
-  const [baseUrl,setBaseUrl]=useState("");
-  const [tab,setTab]=useState<Tab>("chat");
+export default function AgentTester() {
+  // ── SSR-safe mount ─────────────────────────────────────────────────────────
+  // All localStorage reads happen in useEffect to avoid hydration mismatch.
+  const [mounted, setMounted] = useState(false);
 
-  const [health,setHealth]=useState<{status:"ok"|"down"|"checking";gemini:boolean;convex:boolean;email:boolean;hint?:string}>
-    ({status:"checking",gemini:false,convex:false,email:false});
+  // ── api base ────────────────────────────────────────────────────────────────
+  const [base, setBase] = useState<string>(DEFAULT_BASE);
+  const [editingBase, setEditingBase] = useState(false);
+  const [tempBase, setTempBase] = useState(DEFAULT_BASE);
 
-  const [sessionId,setSessionId]=useState("");
-  const [input,setInput]=useState("");
-  const [messages,setMessages]=useState<ChatMessage[]>([]);
-  const [chatLoading,setChatLoading]=useState(false);
-  const [thinkingStage,setThinkingStage]=useState<ThinkingStage>("thinking");
-  const [mode,setMode]=useState<"sync"|"async">("sync");
-  const [autoImprove,setAutoImprove]=useState(false);
-  const messagesEndRef=useRef<HTMLDivElement>(null);
+  // ── live state ──────────────────────────────────────────────────────────────
+  const [health, setHealth] = useState<HealthCheck | null>(null);
+  const [stats, setStats] = useState<ModelStats | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineStats | null>(null);
+  const [heartbeat, setHeartbeat] = useState<HeartbeatStatus | null>(null);
+  const [sessionId] = useState<string>(() => getOrCreateSessionId());
+  const [tab, setTab] = useState<Tab>("chat");
 
-  const [codebase,setCodebase]=useState("");
-  const [codebaseLoading,setCodebaseLoading]=useState(false);
+  // ── training feed (live log of what the model is learning) ─────────────────
+  const [trainingFeed, setTrainingFeed] = useState<{
+    time: string;
+    type: "train" | "research" | "heartbeat" | "info";
+    topic: string;
+    detail: string;
+  }[]>([]);
 
-  const [instruction,setInstruction]=useState("");
-  const [targetFile,setTargetFile]=useState("");
-  const [fullStack,setFullStack]=useState(false);
-  const [improving,setImproving]=useState(false);
-  const [improveResult,setImproveResult]=useState<ImproveResult|null>(null);
-  const [fullStackResult,setFullStackResult]=useState<FullStackImproveResult|null>(null);
-  const [improveHistory,setImproveHistory]=useState<ImprovementHistory>({entries:[]});
+  // ── chat ────────────────────────────────────────────────────────────────────
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const [blueprint,setBlueprint]=useState<BlueprintSnapshot|null>(null);
-  const [sica,setSica]=useState("");
-  const [sicaStatus,setSicaStatus]=useState<SicaStatus|null>(null);
-  const [sicaRunning,setSicaRunning]=useState(false);
-  const [sicaJobId,setSicaJobId]=useState<string|null>(null);
-  const [jobs,setJobs]=useState<AgentJobSummary[]>([]);
+  // ── brain ───────────────────────────────────────────────────────────────────
+  const [vocab, setVocab] = useState<VocabResponse | null>(null);
+  const [vocabFilter, setVocabFilter] = useState("");
+  const [analogyA, setAnalogyA] = useState("");
+  const [analogyB, setAnalogyB] = useState("");
+  const [analogyC, setAnalogyC] = useState("");
+  const [analogyResult, setAnalogyResult] = useState<AnalogyResult | null>(null);
+  const [analogyLoading, setAnalogyLoading] = useState(false);
+  const [similarWord, setSimilarWord] = useState("");
+  const [similarResult, setSimilarResult] = useState<SimilarResult | null>(null);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [memory, setMemory] = useState<MemoryResponse | null>(null);
 
-  const [sandboxCode,setSandboxCode]=useState("");
-  const [sandboxRunning,setSandboxRunning]=useState(false);
-  const [sandboxResult,setSandboxResult]=useState<{stdout:string;stderr:string;returncode:number;timed_out:boolean}|null>(null);
+  // ── research ─────────────────────────────────────────────────────────────────
+  const [researchInput, setResearchInput] = useState("");
+  const [researchRunning, setResearchRunning] = useState(false);
+  const [researchLog, setResearchLog] = useState<string[]>([]);
+  const [topicsEdit, setTopicsEdit] = useState("");
+  const [topicsEditMode, setTopicsEditMode] = useState(false);
+  const [trainTextInput, setTrainTextInput] = useState("");
+  const [trainTextLoading, setTrainTextLoading] = useState(false);
+  const [trainTextResult, setTrainTextResult] = useState<string | null>(null);
 
-  const [userLocation,setUserLocation]=useState<LocationData|null>(null);
-  const [locationLoading,setLocationLoading]=useState(false);
-  const [locationEnabled,setLocationEnabled]=useState(false);
+  // ── generate ─────────────────────────────────────────────────────────────────
+  const [genSeed, setGenSeed] = useState("");
+  const [genTemp, setGenTemp] = useState(0.8);
+  const [genTokens, setGenTokens] = useState(50);
+  const [genResult, setGenResult] = useState<GenerateResult | null>(null);
+  const [genLoading, setGenLoading] = useState(false);
 
-  const [memory,setMemory]=useState("");
-  const [memoryLoading,setMemoryLoading]=useState(false);
-  const [heartbeat,setHeartbeat]=useState<HeartbeatStatus|null>(null);
-  const [topicsEdit,setTopicsEdit]=useState("");
-  const [topicsSaving,setTopicsSaving]=useState(false);
-  const [researchRunning,setResearchRunning]=useState(false);
-  const [sidebarOpen,setSidebarOpen]=useState(false);
+  // animated stats
+  const animVocab  = useAnimatedValue(stats?.vocab_size ?? 0);
+  const animTokens = useAnimatedValue(stats?.training_tokens ?? 0);
+  const animAssoc  = useAnimatedValue(stats?.assoc_memory ?? 0);
+  const animDocs   = useAnimatedValue(stats?.training_docs ?? 0);
 
-  // ── init ────────────────────────────────────────────────────────────────────
-  useEffect(()=>{
-    setBaseUrl(getAgentBaseUrl());
-    setSessionId(getOrCreateSessionId());
-    setMessages(loadMessages());
-    setAutoImprove(ls(STORAGE_AUTO,false));
-  },[]);
+  // ── hydration-safe localStorage load ────────────────────────────────────────
+  useEffect(() => {
+    const savedBase = lsRead(STORAGE_API, DEFAULT_BASE);
+    const savedMsgs = lsRead<ChatMessage[]>(STORAGE_MESSAGES, []);
+    setBase(savedBase);
+    setTempBase(savedBase);
+    setMessages(savedMsgs);
+    setMounted(true);
+  }, []);
 
-  useEffect(()=>{
-    messagesEndRef.current?.scrollIntoView({behavior:"smooth"});
-  },[messages,chatLoading]);
-
-  // ── ping ────────────────────────────────────────────────────────────────────
-  const ping=useCallback(async()=>{
-    const b=(baseUrl||getAgentBaseUrl()).trim();
-    setHealth(h=>({...h,status:"checking",hint:undefined}));
-    const h=await fetchHealth(b);
-    setHealth({
-      status:h.ok?"ok":"down",
-      gemini:h.gemini_configured??false,
-      convex:h.convex_configured??false,
-      email:h.email_notifications_ready??false,
-      hint:h.ok?undefined:h.detail,
-    });
-  },[baseUrl]);
-
-  useEffect(()=>{
-    void ping();
-    const t=setInterval(()=>void ping(),20_000);
-    return ()=>clearInterval(t);
-  },[baseUrl,ping]);
-
-  // ── tab loaders ─────────────────────────────────────────────────────────────
-  const loadCodebase=useCallback(async()=>{
-    setCodebaseLoading(true);
-    const txt=await fetchCodebaseSnapshot(baseUrl||getAgentBaseUrl());
-    setCodebase(txt);setCodebaseLoading(false);
-  },[baseUrl]);
-
-  const loadStatus=useCallback(async()=>{
-    const b=baseUrl||getAgentBaseUrl();
-    const [bp,sc,ss,jbs]=await Promise.all([
-      fetchBlueprint(b),
-      fetchSicaSummary(b),
-      fetchSicaStatus(b),
-      listJobs(b,20),
+  // ── polling ─────────────────────────────────────────────────────────────────
+  const pollStats = useCallback(async () => {
+    if (!base || !mounted) return;
+    const [h, s, p, hb] = await Promise.all([
+      fetchHealth(base),
+      fetchModelStats(base),
+      fetchTrainStatus(base),
+      fetchHeartbeatStatus(base),
     ]);
-    setBlueprint(bp);setSica(sc);
-    setSicaStatus(ss);setJobs(jbs);
-  },[baseUrl]);
+    setHealth(h);
+    if (s) setStats(s);
+    if (p) setPipeline(p);
+    if (hb) setHeartbeat(hb);
+  }, [base, mounted]);
 
-  const loadImprovements=useCallback(async()=>{
-    const hist=await fetchImprovements(baseUrl||getAgentBaseUrl());
-    setImproveHistory(hist);
-  },[baseUrl]);
+  const prevRunsRef = useRef<number>(0);
 
-  const loadResearch=useCallback(async()=>{
-    const b=baseUrl||getAgentBaseUrl();
-    setMemoryLoading(true);
-    const [mem,hb]=await Promise.all([fetchResearchMemory(b),fetchHeartbeatStatus(b)]);
-    setMemory(mem);setHeartbeat(hb);
-    if(hb?.topics) setTopicsEdit(hb.topics.join("\n"));
-    setMemoryLoading(false);
-  },[baseUrl]);
+  useEffect(() => { if (mounted) pollStats(); }, [pollStats, mounted]);
+  useEffect(() => {
+    if (!mounted) return;
+    const id = setInterval(async () => {
+      await pollStats();
+      // Detect when heartbeat fires automatically (total_runs increments)
+      setHeartbeat(hb => {
+        if (hb && hb.total_runs > prevRunsRef.current) {
+          prevRunsRef.current = hb.total_runs;
+          if (hb.next_topic) {
+            setTrainingFeed(prev => [{
+              time: new Date().toLocaleTimeString(),
+              type: "heartbeat" as const,
+              topic: hb.next_topic!,
+              detail: `Heartbeat #${hb.total_runs} completed`,
+            }, ...prev.slice(0, 49)]);
+          }
+        }
+        return hb;
+      });
+    }, 4000);
+    return () => clearInterval(id);
+  }, [pollStats, mounted]);
 
-  useEffect(()=>{
-    if(!baseUrl) return;
-    if(tab==="codebase") void loadCodebase();
-    if(tab==="status") void loadStatus();
-    if(tab==="improve") void loadImprovements();
-    if(tab==="research") void loadResearch();
-  },[tab,baseUrl,loadCodebase,loadStatus,loadImprovements,loadResearch]);
+  // fetch vocab when brain tab opens
+  useEffect(() => {
+    if (tab === "brain" && base) {
+      fetchVocab(base, 300).then(v => { if (v) setVocab(v); });
+      fetchMemory(base, 30).then(m => { if (m) setMemory(m); });
+    }
+  }, [tab, base]);
 
-  // ── helpers ─────────────────────────────────────────────────────────────────
-  const persistBase=(next:string)=>{
-    const v=next.trim().replace(/\/$/,"");
-    setBaseUrl(v);
-    try{ if(v) localStorage.setItem(STORAGE_API,v); else localStorage.removeItem(STORAGE_API); }catch{/**/}
+  // scroll chat
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // persist messages (only after mount to avoid SSR issues)
+  useEffect(() => {
+    if (mounted) lsWrite(STORAGE_MESSAGES, messages.slice(-60));
+  }, [messages, mounted]);
+
+  // ── chat ────────────────────────────────────────────────────────────────────
+  const sendChat = useCallback(async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading) return;
+    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", content: msg, at: Date.now() };
+    setMessages(prev => [...prev, userMsg]);
+    setChatInput("");
+    setChatLoading(true);
+    try {
+      const result = await postChat(base, msg, sessionId);
+      const asstMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: result.answer,
+        turn: result,
+        at: Date.now(),
+      };
+      setMessages(prev => [...prev, asstMsg]);
+    } catch (e) {
+      const asstMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "",
+        error: e instanceof Error ? e.message : "Error",
+        at: Date.now(),
+      };
+      setMessages(prev => [...prev, asstMsg]);
+    } finally {
+      setChatLoading(false);
+      pollStats();
+    }
+  }, [chatInput, chatLoading, base, sessionId, pollStats]);
+
+  // ── training feed helper ─────────────────────────────────────────────────────
+  const addFeedEntry = useCallback((
+    type: "train" | "research" | "heartbeat" | "info",
+    topic: string,
+    detail: string,
+  ) => {
+    setTrainingFeed(prev => [{
+      time: new Date().toLocaleTimeString(),
+      type,
+      topic,
+      detail,
+    }, ...prev.slice(0, 49)]);
+  }, []);
+
+  // ── analogy ─────────────────────────────────────────────────────────────────
+  const runAnalogy = useCallback(async () => {
+    if (!analogyA || !analogyB || !analogyC || analogyLoading) return;
+    setAnalogyLoading(true);
+    const r = await solveAnalogy(base, analogyA, analogyB, analogyC);
+    setAnalogyResult(r);
+    setAnalogyLoading(false);
+  }, [base, analogyA, analogyB, analogyC, analogyLoading]);
+
+  // ── similarity ───────────────────────────────────────────────────────────────
+  const runSimilar = useCallback(async () => {
+    if (!similarWord || similarLoading) return;
+    setSimilarLoading(true);
+    const r = await findSimilar(base, similarWord, 10);
+    setSimilarResult(r);
+    setSimilarLoading(false);
+  }, [base, similarWord, similarLoading]);
+
+  // ── research ─────────────────────────────────────────────────────────────────
+  const runResearch = useCallback(async (topic: string) => {
+    if (!topic.trim() || researchRunning) return;
+    setResearchRunning(true);
+    addFeedEntry("research", topic, "Scraping Wikipedia + DuckDuckGo…");
+    setResearchLog(prev => [`[${new Date().toLocaleTimeString()}] Researching: "${topic}"...`, ...prev]);
+    const r = await researchTopic(base, topic.trim());
+    if (r) {
+      const d = r.details as Record<string, unknown>;
+      const detail = `${d.docs_count} docs · ${(d.total_words as number)?.toLocaleString()} words · ${d.pairs_trained} pairs`;
+      setResearchLog(prev => [`[${new Date().toLocaleTimeString()}] ✓ ${detail}`, ...prev]);
+      addFeedEntry("research", topic, `✓ ${detail}`);
+    } else {
+      setResearchLog(prev => [`[${new Date().toLocaleTimeString()}] ✗ Failed`, ...prev]);
+      addFeedEntry("research", topic, "✗ Failed");
+    }
+    setResearchRunning(false);
+    pollStats();
+  }, [base, researchRunning, pollStats, addFeedEntry]);
+
+  const triggerHeartbeatNow = useCallback(async () => {
+    const next = heartbeat?.next_topic ?? "next scheduled topic";
+    const ok = await triggerHeartbeat(base);
+    if (ok) {
+      addFeedEntry("heartbeat", next, "Heartbeat triggered — scraping in background");
+      setResearchLog(prev => [`[${new Date().toLocaleTimeString()}] ✓ Heartbeat triggered: "${next}"`, ...prev]);
+    } else {
+      setResearchLog(prev => [`[${new Date().toLocaleTimeString()}] ✗ Heartbeat trigger failed`, ...prev]);
+    }
+    setTimeout(pollStats, 3000);
+  }, [base, heartbeat, pollStats, addFeedEntry]);
+
+  // ── train text ───────────────────────────────────────────────────────────────
+  const runTrainText = useCallback(async () => {
+    if (!trainTextInput.trim() || trainTextLoading) return;
+    setTrainTextLoading(true);
+    setTrainTextResult(null);
+    const preview = trainTextInput.trim().slice(0, 60) + (trainTextInput.length > 60 ? "…" : "");
+    addFeedEntry("train", "manual text", `Training: "${preview}"`);
+    const r = await trainText(base, trainTextInput.trim());
+    if (r) {
+      const result = `✓ ${r.pairs_trained} pairs trained — vocab now ${r.vocab_size.toLocaleString()}`;
+      setTrainTextResult(result);
+      addFeedEntry("train", "manual text", result);
+      setTrainTextInput("");
+    } else {
+      setTrainTextResult("✗ Training failed");
+      addFeedEntry("train", "manual text", "✗ Training failed");
+    }
+    setTrainTextLoading(false);
+    pollStats();
+  }, [base, trainTextInput, trainTextLoading, pollStats, addFeedEntry]);
+
+  // ── generate ─────────────────────────────────────────────────────────────────
+  const runGenerate = useCallback(async () => {
+    if (!genSeed.trim() || genLoading) return;
+    setGenLoading(true);
+    setGenResult(null);
+    const r = await generate(base, genSeed.trim(), genTokens, genTemp);
+    setGenResult(r);
+    setGenLoading(false);
+    if (r?.generated) {
+      addFeedEntry("info", "generation", `"${genSeed}" → "${r.generated.slice(0, 60)}"`);
+    }
+  }, [base, genSeed, genTokens, genTemp, genLoading, addFeedEntry]);
+
+  // ── base URL save ─────────────────────────────────────────────────────────────
+  const saveBase = () => {
+    const v = tempBase.trim().replace(/\/$/, "");
+    setBase(v);
+    lsWrite(STORAGE_API, v);
+    setEditingBase(false);
+    setTimeout(pollStats, 200);
   };
 
-  const newSession=()=>{
-    const id=resetSessionId();
-    setSessionId(id);setMessages([]);
-    try{localStorage.removeItem(STORAGE_MESSAGES);}catch{/**/}
+
+  // ── save topics ───────────────────────────────────────────────────────────────
+  const saveTopics = async () => {
+    const topics = topicsEdit.split("\n").map(t => t.trim()).filter(Boolean);
+    const ok = await setHeartbeatTopics(base, topics);
+    if (ok) { setTopicsEditMode(false); pollStats(); }
   };
 
-  const emailNote=(turn:ChatTurnResult):string=>{
-    const m=turn.metadata;
-    if(!m?.user_requested_email) return "";
-    if(m.email_notification_sent) return "\n\n---\n*📧 Email copy sent to your inbox.*";
-    return "\n\n---\n*📧 Email requested but not sent — check SMTP config.*";
-  };
+  // ── status indicator ─────────────────────────────────────────────────────────
+  const connected = health?.ok === true;
 
-  const appendAssistant=(turn:ChatTurnResult,err?:string)=>{
-    const msg:ChatMessage={id:crypto.randomUUID(),role:"assistant",
-      content:err??(turn.answer+emailNote(turn)),turn,error:err,at:Date.now()};
-    setMessages(prev=>{const n=[...prev,msg];saveMessages(n);return n;});
-  };
-  const appendUser=(text:string)=>{
-    const msg:ChatMessage={id:crypto.randomUUID(),role:"user",content:text,at:Date.now()};
-    setMessages(prev=>{const n=[...prev,msg];saveMessages(n);return n;});
-  };
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  const guessStage=(text:string):ThinkingStage=>{
-    if(/\b(research|current|today|news|latest|2026|liverpool|salah|search)\b/i.test(text)) return "searching";
-    if(/\b(add|implement|create|fix|refactor|update|improve)\b/i.test(text)&&autoImprove) return "writing code";
-    return "thinking";
-  };
-
-  // ── location ─────────────────────────────────────────────────────────────────
-  const detectUserLocation=async()=>{
-    setLocationLoading(true);
-    try{
-      const loc=await detectLocation(baseUrl||getAgentBaseUrl());
-      setUserLocation(loc);
-      if(loc) setLocationEnabled(true);
-    }catch{/**/}
-    finally{setLocationLoading(false);}
-  };
-
-  // ── send ────────────────────────────────────────────────────────────────────
-  const sendSync=async(prefill?:string)=>{
-    const text=(prefill??input).trim();
-    if(!text||chatLoading) return;
-    const b=baseUrl||getAgentBaseUrl();
-    appendUser(text);
-    if(!prefill) setInput("");
-    setChatLoading(true);setThinkingStage(guessStage(text));
-    const loc=locationEnabled?userLocation:null;
-    try{ const turn=await postChat(b,text,sessionId||null,autoImprove,loc); appendAssistant(turn); }
-    catch(e){ appendAssistant({...EMPTY_TURN},e instanceof Error?e.message:"Request failed"); }
-    finally{ setChatLoading(false); }
-  };
-
-  const sendAsync=async(prefill?:string)=>{
-    const text=(prefill??input).trim();
-    if(!text||chatLoading) return;
-    const b=baseUrl||getAgentBaseUrl();
-    appendUser(`[async] ${text}`);
-    if(!prefill) setInput("");
-    setChatLoading(true);setThinkingStage(guessStage(text));
-    try{
-      const {job_id}=await startAgentJob(b,text,sessionId||null,autoImprove);
-      let result:ChatTurnResult|null=null;
-      for(let i=0;i<300;i++){
-        const job=await getAgentJob(b,job_id);result=job.result;
-        if(result) break;
-        if(i>10&&i%5===0) setThinkingStage(p=>p==="thinking"?"searching":p==="searching"?"writing code":"thinking");
-        await new Promise(r=>setTimeout(r,100));
-      }
-      if(result) appendAssistant(result);
-      else appendAssistant({...EMPTY_TURN,answer:"Job did not complete in time."});
-    }catch(e){ appendAssistant({...EMPTY_TURN},e instanceof Error?e.message:"Async job failed"); }
-    finally{ setChatLoading(false); }
-  };
-
-  const send=(prefill?:string)=>void(mode==="sync"?sendSync(prefill):sendAsync(prefill));
-
-  // ── improve ─────────────────────────────────────────────────────────────────
-  const submitImprovement=async()=>{
-    const instr=instruction.trim();
-    if(!instr||improving) return;
-    const b=baseUrl||getAgentBaseUrl();
-    setImproving(true);setImproveResult(null);setFullStackResult(null);
-    try{
-      if(fullStack){ const r=await requestFullStackImprovement(b,instr,targetFile.trim()||undefined); setFullStackResult(r); void loadImprovements(); }
-      else{ const r=await requestImprovement(b,instr,targetFile.trim()||undefined); setImproveResult(r); void loadImprovements(); }
-    }catch(e){
-      const errMsg=e instanceof Error?e.message:"Request failed";
-      if(fullStack) setFullStackResult({ok:false,instruction:instr,
-        backend:{ok:false,target_file:"?",instruction:instr,old_code:"",new_code:"",ast_ok:false,committed:false,commit_hash:null,error:errMsg,timestamp:new Date().toISOString(),file_changes:[]},
-        frontend_api:null,frontend_ui:null,timestamp:new Date().toISOString()});
-      else setImproveResult({ok:false,target_file:targetFile||"?",instruction:instr,old_code:"",new_code:"",ast_ok:false,committed:false,commit_hash:null,error:errMsg,timestamp:new Date().toISOString(),file_changes:[]});
-    }finally{ setImproving(false); }
-  };
-
-  const gaps=useMemo(()=>blueprint?.items.filter(i=>i.status!=="done")??[],[blueprint]);
-  const effectiveApiBase=useMemo(()=>(baseUrl||getAgentBaseUrl()).trim(),[baseUrl]);
-
-  const TABS:{id:Tab;label:string;icon:string;badge?:number}[]=[
-    {id:"chat",    label:"Chat",     icon:"◎"},
-    {id:"research",label:"Research", icon:"⬡"},
-    {id:"improve", label:"Improve",  icon:"⚡",badge:improveHistory.entries.length||undefined},
-    {id:"codebase",label:"Codebase", icon:"◫"},
-    {id:"status",  label:"Status",   icon:"◈",badge:gaps.length||undefined},
+  const TAB_ITEMS: { id: Tab; label: string; icon: string }[] = [
+    { id: "chat",     label: "Chat",     icon: "◎" },
+    { id: "brain",    label: "Brain",    icon: "⬡" },
+    { id: "research", label: "Research", icon: "⊞" },
+    { id: "generate", label: "Generate", icon: "≋" },
   ];
 
-  // ─── render ──────────────────────────────────────────────────────────────────
+  // Prevent SSR/client mismatch — render nothing until client hydration completes
+  if (!mounted) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: "100vh", background: "var(--void)", color: "var(--txt-3)", fontSize: 13,
+        fontFamily: "var(--font-mono)", gap: 10,
+      }}>
+        <div className="neural-dot" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--cyan)" }} />
+        <div className="neural-dot" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--cyan)", animationDelay: "0.16s" }} />
+        <div className="neural-dot" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--cyan)", animationDelay: "0.32s" }} />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen overflow-hidden" style={{background:"var(--void)"}}>
-      <DataBackground />
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--void)", fontFamily: "var(--font-sans)" }}>
 
-      {/* everything above the canvas gets relative z-index */}
-      {/* ── SIDEBAR (desktop) ─────────────────────────────────────────────── */}
-      <aside className="hidden lg:flex flex-col w-64 shrink-0 overflow-y-auto"
-        style={{background:"var(--surface)",borderRight:"1px solid var(--border-dim)",position:"relative",zIndex:1}}>
+      {/* ── TOP BAR ── */}
+      <header style={{
+        display: "flex", alignItems: "center", gap: 12, padding: "0 20px",
+        height: 52, background: "var(--surface)", borderBottom: "1px solid var(--border-dim)",
+        flexShrink: 0,
+      }}>
         {/* logo */}
-        <div className="flex items-center gap-3 px-5 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl relative"
-            style={{background:"linear-gradient(135deg,var(--blue),var(--cyan))"}}>
-            <span className="font-mono text-[13px] font-bold text-black">SA</span>
-          </div>
-          <div>
-            <h1 className="text-sm font-bold" style={{color:"var(--txt)"}}>Super Agent</h1>
-            <p className="text-[10px]" style={{color:"var(--txt-3)"}}>Neuro-symbolic · self-evolving</p>
-          </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: 8,
+            background: "linear-gradient(135deg, var(--cyan), var(--blue))",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 14, fontWeight: 700, color: "#000",
+          }}>H</div>
+          <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-.01em" }}>HDC Brain</span>
         </div>
 
-        {/* status cluster */}
-        <div className="mx-4 mb-4 rounded-xl p-3" style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
-          <div className="flex items-center gap-2 mb-2">
-            <StatusDot status={health.status}/>
-            <span className="text-xs font-semibold" style={{color:health.status==="ok"?"var(--green)":health.status==="down"?"var(--red)":"var(--amber)"}}>
-              {health.status==="ok"?"Online":health.status==="down"?"Offline":"Checking"}
-            </span>
-            <button onClick={()=>void ping()} className="ml-auto text-xs transition hover:opacity-70" style={{color:"var(--txt-3)"}}>↺</button>
-          </div>
-          <div className="grid grid-cols-4 gap-1">
-            {[
-              {k:"gemini",label:"Gemini",v:health.gemini},
-              {k:"convex",label:"Convex",v:health.convex},
-              {k:"email", label:"Email", v:health.email},
-              {k:"location",label:"Loc",v:!!userLocation&&locationEnabled},
-            ].map(({k,label,v})=>(
-              <div key={k} className="flex flex-col items-center rounded-lg py-1.5" style={{background:"var(--elevated)"}}>
-                <span className="text-[9px] font-semibold uppercase" style={{color:v?"var(--teal)":"var(--txt-3)"}}>{label}</span>
-                <span className="text-[10px]" style={{color:v?"var(--green)":"var(--txt-3)"}}>{v?"✓":"—"}</span>
-              </div>
-            ))}
-          </div>
-          {health.hint && (
-            <p className="mt-2 text-[10px] leading-snug" style={{color:"var(--amber)"}}>{health.hint.slice(0,200)}</p>
-          )}
-        </div>
+        {/* status dot */}
+        <div
+          className={connected ? "dot-live" : "dot-amber"}
+          style={{
+            width: 8, height: 8, borderRadius: "50%",
+            background: connected ? "var(--green)" : "var(--amber)",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontSize: 12, color: connected ? "var(--green)" : "var(--amber)" }}>
+          {connected ? "connected" : health ? "offline" : "connecting…"}
+        </span>
 
-        {/* nav */}
-        <nav className="flex flex-col gap-0.5 px-3 mb-4">
-          {TABS.map(t=>(
-            <NavItem key={t.id} id={t.id} label={t.label} icon={t.icon}
-              active={tab===t.id} badge={t.badge} onClick={()=>setTab(t.id)}/>
-          ))}
-        </nav>
-
-        {/* session */}
-        <div className="mx-4 mb-4 rounded-xl p-3" style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Session</p>
-          <p className="font-mono text-[10px] truncate" style={{color:"var(--txt-2)"}}>{sessionId.slice(0,24)}…</p>
-          <p className="mt-0.5 text-[10px]" style={{color:"var(--txt-3)"}}>{messages.length} messages</p>
-          <button onClick={newSession}
-            className="mt-2 w-full rounded-lg py-1.5 text-[11px] font-medium transition hover:opacity-80"
-            style={{background:"var(--elevated)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}>
-            + New session
-          </button>
-        </div>
-
-        {/* API URL */}
-        <div className="mx-4 mb-4">
-          <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>API URL</p>
-          <input
-            className="w-full rounded-lg px-2.5 py-1.5 font-mono text-[10px] outline-none transition"
-            style={{background:"var(--elevated)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}
-            value={baseUrl} onChange={e=>persistBase(e.target.value)}
-            placeholder="http://127.0.0.1:8000" spellCheck={false}/>
-        </div>
-
-        {/* auto-improve */}
-        <div className="mx-4 mb-4 rounded-xl p-3" style={{background:"var(--card)",border:`1px solid ${autoImprove?"var(--violet)44":"var(--border-dim)"}`}}>
-          <div className="flex items-center gap-2">
-            <button type="button" role="switch" aria-checked={autoImprove}
-              onClick={()=>{setAutoImprove(p=>{lsSet(STORAGE_AUTO,!p);return !p;})}}
-              className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0"
-              style={{background:autoImprove?"var(--violet)":"var(--elevated)"}}>
-              <span className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform"
-                style={{transform:autoImprove?"translateX(18px)":"translateX(2px)"}}/>
-            </button>
-            <span className="text-[11px] font-semibold" style={{color:autoImprove?"var(--violet)":"var(--txt-2)"}}>Auto-improve</span>
-          </div>
-          {autoImprove && (
-            <p className="mt-1.5 text-[10px] leading-relaxed" style={{color:"var(--txt-3)"}}>
-              Code change requests auto-run the SICA pipeline.
-            </p>
-          )}
-        </div>
-
-        {/* location */}
-        <div className="mx-4 mb-4 rounded-xl p-3" style={{background:"var(--card)",border:`1px solid ${locationEnabled?"var(--teal)44":"var(--border-dim)"}`}}>
-          <div className="flex items-center justify-between mb-1.5">
-            <p className="text-[9px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>📍 Location</p>
-            <button type="button" role="switch" aria-checked={locationEnabled}
-              onClick={()=>{
-                if(!userLocation){ void detectUserLocation(); }
-                else setLocationEnabled(p=>!p);
-              }}
-              className="relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0"
-              style={{background:locationEnabled?"var(--teal)":"var(--elevated)"}}>
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-white shadow transition-transform"
-                style={{transform:locationEnabled?"translateX(14px)":"translateX(2px)"}}/>
-            </button>
-          </div>
-          {locationLoading && (
-            <p className="text-[10px]" style={{color:"var(--txt-3)"}}>Detecting…</p>
-          )}
-          {userLocation && !locationLoading && (
-            <div>
-              <p className="font-semibold text-[11px]" style={{color:locationEnabled?"var(--teal)":"var(--txt-3)"}}>
-                {[userLocation.city,userLocation.country].filter(Boolean).join(", ")||"Unknown"}
-              </p>
-              {userLocation.lat!=null && (
-                <p className="font-mono text-[9px] mt-0.5" style={{color:"var(--txt-3)"}}>
-                  {userLocation.lat.toFixed(3)}, {userLocation.lon?.toFixed(3)} · {userLocation.source}
-                </p>
-              )}
-              {locationEnabled && (
-                <p className="text-[9px] mt-1 leading-relaxed" style={{color:"var(--teal)"}}>
-                  Location-sensitive searches will use this context.
-                </p>
-              )}
-            </div>
-          )}
-          {!userLocation && !locationLoading && (
-            <button type="button" onClick={()=>void detectUserLocation()}
-              className="text-[10px] mt-0.5 transition hover:opacity-70"
-              style={{color:"var(--txt-3)"}}>
-              Click to detect location
-            </button>
-          )}
-        </div>
-
-        {/* stats mini */}
-        {heartbeat && tab!=="research" && (
-          <div className="mx-4 mb-4">
-            <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Research</p>
-            <div className="rounded-xl p-2.5" style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
-              <div className="flex justify-between text-[10px]">
-                <span style={{color:"var(--txt-3)"}}>Runs</span>
-                <span style={{color:"var(--cyan)"}}>{heartbeat.total_runs}</span>
-              </div>
-              <div className="flex justify-between text-[10px]">
-                <span style={{color:"var(--txt-3)"}}>Topics</span>
-                <span style={{color:"var(--cyan)"}}>{heartbeat.topic_count}</span>
-              </div>
-              <div className="flex justify-between text-[10px]">
-                <span style={{color:"var(--txt-3)"}}>Last</span>
-                <span style={{color:"var(--txt-2)"}}>{fmtRelative(heartbeat.last_run)}</span>
-              </div>
-            </div>
+        {/* mini stats */}
+        {stats && (
+          <div style={{ display: "flex", gap: 16, marginLeft: "auto", fontSize: 12, color: "var(--txt-2)", fontFamily: "var(--font-mono)" }}>
+            <span>vocab <span style={{ color: "var(--cyan)" }}>{fmt(stats.vocab_size)}</span></span>
+            <span>tokens <span style={{ color: "var(--green)" }}>{fmt(stats.training_tokens)}</span></span>
+            <span>assoc <span style={{ color: "var(--violet)" }}>{fmt(stats.assoc_memory)}</span></span>
           </div>
         )}
 
-        <div className="flex-1"/>
-        <div className="mx-4 mb-4 text-[9px]" style={{color:"var(--txt-3)"}}>
-          FastAPI · Gemini · HDC · SymPy · Convex
+        {/* api url */}
+        <div style={{ marginLeft: stats ? 16 : "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          {editingBase ? (
+            <>
+              <input
+                value={tempBase}
+                onChange={e => setTempBase(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") saveBase(); if (e.key === "Escape") setEditingBase(false); }}
+                autoFocus
+                style={{ background: "var(--elevated)", border: "1px solid var(--border)", borderRadius: 6, padding: "3px 8px", fontSize: 12, color: "var(--txt)", width: 240, fontFamily: "var(--font-mono)" }}
+              />
+              <button onClick={saveBase} style={{ fontSize: 11, color: "var(--cyan)", background: "none", border: "none", cursor: "pointer" }}>Save</button>
+              <button onClick={() => setEditingBase(false)} style={{ fontSize: 11, color: "var(--txt-3)", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+            </>
+          ) : (
+            <button
+              onClick={() => { setTempBase(base); setEditingBase(true); }}
+              style={{ fontSize: 11, color: "var(--txt-3)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-mono)" }}
+            >
+              {base || "set API URL"}
+            </button>
+          )}
         </div>
-      </aside>
+      </header>
 
-      {/* ── MAIN CONTENT ──────────────────────────────────────────────────── */}
-      <div className="flex flex-1 flex-col min-w-0 overflow-hidden" style={{position:"relative",zIndex:1}}>
+      {/* ── BODY ── */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
 
-        {/* mobile header */}
-        <header className="flex lg:hidden items-center gap-3 px-4 py-3 shrink-0"
-          style={{borderBottom:"1px solid var(--border-dim)",background:"var(--surface)"}}>
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl"
-            style={{background:"linear-gradient(135deg,var(--blue),var(--cyan))"}}>
-            <span className="font-mono text-[11px] font-bold text-black">SA</span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-bold truncate" style={{color:"var(--txt)"}}>Super Agent</h1>
-          </div>
-          <StatusDot status={health.status}/>
-          <span className="text-[9px] font-semibold" style={{color:health.status==="ok"?"var(--green)":"var(--amber)"}}>
-            {health.status==="ok"?"Online":"Checking"}
-          </span>
-        </header>
+        {/* ── LEFT SIDEBAR ── */}
+        <aside style={{
+          width: 200, flexShrink: 0, background: "var(--surface)",
+          borderRight: "1px solid var(--border-dim)",
+          display: "flex", flexDirection: "column", padding: "16px 12px", gap: 8, overflowY: "auto",
+        }}>
+          {/* tabs */}
+          {TAB_ITEMS.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "9px 12px", borderRadius: 8,
+                background: tab === t.id ? "var(--elevated)" : "transparent",
+                border: tab === t.id ? "1px solid var(--border)" : "1px solid transparent",
+                color: tab === t.id ? "var(--txt)" : "var(--txt-2)",
+                fontSize: 13, cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)",
+                transition: "all .15s",
+              }}
+            >
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 14 }}>{t.icon}</span>
+              {t.label}
+            </button>
+          ))}
 
-        {/* tab content */}
-        <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
-          <div className="mx-auto max-w-4xl px-4 py-4 lg:px-6 lg:py-6">
-
-            {/* desktop tab strip */}
-            <div className="mb-5 hidden lg:flex gap-1 rounded-xl p-1"
-              style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-              {TABS.map(t=>(
-                <button key={t.id} type="button" onClick={()=>setTab(t.id)}
-                  className="relative flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all"
-                  style={{
-                    background:tab===t.id?"var(--elevated)":"transparent",
-                    color:tab===t.id?"var(--cyan)":"var(--txt-3)",
-                    border:tab===t.id?"1px solid var(--border)":"1px solid transparent",
-                  }}>
-                  <span className="text-sm">{t.icon}</span>
-                  <span>{t.label}</span>
-                  {t.badge!=null && t.badge>0 && (
-                    <span className="ml-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
-                      style={{background:"var(--blue)",color:"#fff"}}>{t.badge}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            {/* ──── CHAT TAB ──────────────────────────────────────────────── */}
-            {tab==="chat" && (
-              <div className="flex flex-col gap-3">
-                {/* mode bar */}
-                <div className="flex flex-wrap items-center gap-3 rounded-xl px-4 py-2.5"
-                  style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <div className="flex items-center gap-0.5 rounded-lg p-0.5"
-                    style={{background:"var(--elevated)"}}>
-                    {(["sync","async"] as const).map(m=>(
-                      <button key={m} type="button" onClick={()=>setMode(m)}
-                        className="rounded-md px-3 py-1 text-[11px] font-semibold transition-all"
-                        style={{background:mode===m?"var(--card)":"transparent",color:mode===m?"var(--cyan)":"var(--txt-3)",
-                          border:mode===m?"1px solid var(--border)":"1px solid transparent"}}>
-                        {m==="sync"?"Sync":"Async"}
-                      </button>
-                    ))}
-                  </div>
-                  <span className="text-[10px]" style={{color:"var(--txt-3)"}}>
-                    {mode==="sync"?"POST /chat — blocks until reply":"POST /agent/start — polls job"}
-                  </span>
-                  {autoImprove && (
-                    <span className="ml-auto rounded-lg px-2 py-0.5 text-[10px] font-semibold"
-                      style={{background:"var(--violet)22",color:"var(--violet)",border:"1px solid var(--violet)44"}}>
-                      ⚡ auto-improve ON
-                    </span>
-                  )}
-                </div>
-
-                {/* messages */}
-                <div className="flex flex-col rounded-2xl overflow-hidden"
-                  style={{background:"var(--surface)",border:"1px solid var(--border-dim)",minHeight:"420px"}}>
-                  <div className="flex-1 overflow-y-auto px-4 py-4" style={{maxHeight:"min(58vh,580px)"}}>
-                    {messages.length===0 && (
-                      <div className="py-8 fade-in">
-                        <div className="mb-2 flex items-center gap-2">
-                          <span className="h-px flex-1" style={{background:"var(--border-dim)"}}/>
-                          <span className="text-[10px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>
-                            Neural Command Interface
-                          </span>
-                          <span className="h-px flex-1" style={{background:"var(--border-dim)"}}/>
-                        </div>
-                        <p className="mb-5 text-sm leading-relaxed" style={{color:"var(--txt-3)"}}>
-                          The agent knows its own codebase, remembers this session, performs live web search for current events,
-                          and can modify its own code when Auto-improve is on.
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {SUGGESTIONS.map(s=>(
-                            <button key={s} type="button" onClick={()=>send(s)}
-                              className="rounded-xl px-3 py-2 text-xs font-medium transition-all hover:scale-[1.02]"
-                              style={{background:"var(--card)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}>
-                              {s}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {messages.map(m=>{
-                      const improveData=m.turn?.metadata?.improve_result as ImproveResult|undefined;
-                      const fsData=m.turn?.metadata?.fullstack_result as FullStackImproveResult|undefined;
-                      const isUser=m.role==="user";
-                      return (
-                        <div key={m.id} className={`mb-4 flex slide-up ${isUser?"justify-end":"justify-start"}`}>
-                          <div className={`max-w-[88%] flex flex-col ${isUser?"items-end":"items-start"}`}>
-                            <div className="rounded-2xl px-4 py-3" style={isUser
-                              ? {background:"linear-gradient(135deg,var(--blue),#1a5fff)",color:"#fff"}
-                              : {background:"var(--card)",border:"1px solid var(--border-dim)",color:"var(--txt)"}}>
-                              {m.role==="assistant"&&!m.error
-                                ? <MarkdownMessage text={m.content}/>
-                                : <p className="text-sm leading-relaxed">{m.content}</p>}
-                              {m.error && <p className="mt-1 text-xs" style={{color:"var(--red)"}}>{m.error}</p>}
-                              {m.turn&&m.role==="assistant"&&!m.error && (
-                                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 pt-2 font-mono text-[9px]"
-                                  style={{borderTop:"1px solid var(--border-dim)"}}>
-                                  <Pill label={m.turn.intent||m.turn.route}
-                                    color={m.turn.intent==="improve"?"violet":m.turn.route==="symbolic"?"amber":"blue"}/>
-                                  {m.turn.hdc_similarity!=null && (
-                                    <span style={{color:"var(--txt-3)"}}>hdc={m.turn.hdc_similarity.toFixed(3)}</span>
-                                  )}
-                                  {m.turn.grounded && <Pill label="🔍 searched" color="cyan"/>}
-                                  {!!m.turn.metadata?.email_notification_sent && <Pill label="📧 emailed" color="teal"/>}
-                                  <span className="ml-auto" style={{color:"var(--txt-3)"}}>{fmtTime(m.at)}</span>
-                                </div>
-                              )}
-                            </div>
-                            {fsData && <InlineFullStackCard r={fsData}/>}
-                            {!fsData && improveData && <InlineImproveCard r={improveData}/>}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {chatLoading && (
-                      <div className="mb-4 flex justify-start">
-                        <ThinkingAnim stage={thinkingStage}/>
-                      </div>
-                    )}
-                    <div ref={messagesEndRef}/>
-                  </div>
-
-                  {/* input */}
-                  <div className="p-3" style={{borderTop:"1px solid var(--border-dim)"}}>
-                    <div className="relative rounded-xl overflow-hidden" style={{border:"1px solid var(--border)"}}>
-                      <textarea
-                        className="w-full resize-none px-4 py-3 text-sm outline-none"
-                        style={{background:"var(--elevated)",color:"var(--txt)",minHeight:"72px"}}
-                        rows={3} value={input} onChange={e=>setInput(e.target.value)}
-                        placeholder={autoImprove
-                          ?"Chat or say 'add X to the API' to auto-modify code…"
-                          :"Ask anything — live search, maths, your codebase, email me a summary…"}
-                        onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
-                      />
-                    </div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button type="button" disabled={chatLoading||!input.trim()} onClick={()=>send()}
-                        className="rounded-xl px-5 py-2 text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-40"
-                        style={{background:"linear-gradient(135deg,var(--blue),var(--cyan))",color:"#000"}}>
-                        {chatLoading?"…":"Send ⏎"}
-                      </button>
-                      <span className="text-[10px]" style={{color:"var(--txt-3)"}}>⇧⏎ newline</span>
-                      {messages.length>0 && (
-                        <button type="button" onClick={newSession}
-                          className="ml-auto text-[10px] transition hover:opacity-70"
-                          style={{color:"var(--txt-3)"}}>
-                          clear session
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
+          {/* model stats */}
+          <div style={{ marginTop: 16, borderTop: "1px solid var(--border-dim)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 10, color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 2 }}>Model</div>
+            {[
+              { label: "Vocab",  val: fmt(animVocab),  color: "var(--cyan)" },
+              { label: "Tokens", val: fmt(animTokens), color: "var(--green)" },
+              { label: "Assoc",  val: fmt(animAssoc),  color: "var(--violet)" },
+              { label: "Docs",   val: fmt(animDocs),   color: "var(--amber)" },
+            ].map(row => (
+              <div key={row.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span style={{ color: "var(--txt-3)" }}>{row.label}</span>
+                <span style={{ color: row.color, fontFamily: "var(--font-mono)" }}>{row.val}</span>
+              </div>
+            ))}
+            {stats?.last_trained && (
+              <div style={{ fontSize: 10, color: "var(--txt-3)", marginTop: 2 }}>
+                trained {timeAgo(stats.last_trained)}
               </div>
             )}
+          </div>
 
-            {/* ──── RESEARCH TAB ───────────────────────────────────────────── */}
-            {tab==="research" && ResearchTabLive && (
-              <ResearchTabLive baseUrl={baseUrl||getAgentBaseUrl()}/>
-            )}
-            {tab==="research" && !ResearchTabLive && (
-              <ResearchTabFallback
-                heartbeat={heartbeat} memory={memory} memoryLoading={memoryLoading}
-                topicsEdit={topicsEdit} setTopicsEdit={setTopicsEdit}
-                topicsSaving={topicsSaving} researchRunning={researchRunning}
-                baseUrl={baseUrl||getAgentBaseUrl()}
-                onRunResearch={async()=>{
-                  setResearchRunning(true);
-                  await triggerResearch(baseUrl||getAgentBaseUrl());
-                  await new Promise(r=>setTimeout(r,1200));
-                  await loadResearch();setResearchRunning(false);
-                }}
-                onSaveTopics={async()=>{
-                  setTopicsSaving(true);
-                  const topics=topicsEdit.split("\n").map(t=>t.trim()).filter(Boolean);
-                  await setHeartbeatTopics(baseUrl||getAgentBaseUrl(),topics);
-                  await loadResearch();setTopicsSaving(false);
-                }}
-                onClearMemory={async()=>{
-                  if(!confirm("Clear all research memory?")) return;
-                  await clearResearchMemory(baseUrl||getAgentBaseUrl());
-                  setMemory("");
-                }}
-                onRefresh={loadResearch}
-              />
-            )}
-
-            {/* ──── IMPROVE TAB ────────────────────────────────────────────── */}
-            {tab==="improve" && (
-              <div className="flex flex-col gap-5">
-                <div className="rounded-2xl p-5" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <div className="mb-5 flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl"
-                      style={{background:"var(--violet)22",border:"1px solid var(--violet)44"}}>⚡</div>
-                    <div>
-                      <h3 className="font-bold text-base" style={{color:"var(--txt)"}}>Direct code improvement</h3>
-                      <p className="mt-0.5 text-xs" style={{color:"var(--txt-3)"}}>
-                        Describe the change. The agent localises affected files, generates code, runs AST validation, writes and commits.
-                      </p>
-                    </div>
-                  </div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Instruction</label>
-                  <textarea
-                    className="mb-4 w-full resize-none rounded-xl px-4 py-3 text-sm outline-none transition"
-                    style={{background:"var(--elevated)",color:"var(--txt)",border:"1px solid var(--border)",minHeight:"96px"}}
-                    rows={4} value={instruction} onChange={e=>setInstruction(e.target.value)}
-                    placeholder={"Add a /api/v1/sessions list endpoint\nImprove the HDC memory retrieval scoring\nAdd rate limiting to all chat endpoints"}
-                  />
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Target file (optional)</label>
-                  <input
-                    className="mb-4 w-full rounded-xl px-4 py-2.5 font-mono text-sm outline-none"
-                    style={{background:"var(--elevated)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}
-                    value={targetFile} onChange={e=>setTargetFile(e.target.value)}
-                    placeholder="super_agent/app/api/routes.py (leave blank to auto-detect)"/>
-                  <div className="mb-5 flex items-center gap-3 rounded-xl p-3"
-                    style={{background:"var(--elevated)",border:`1px solid ${fullStack?"var(--violet)44":"var(--border-dim)"}`}}>
-                    <button type="button" role="switch" aria-checked={fullStack}
-                      onClick={()=>setFullStack(f=>!f)}
-                      className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0"
-                      style={{background:fullStack?"var(--violet)":"var(--card)"}}>
-                      <span className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform"
-                        style={{transform:fullStack?"translateX(18px)":"translateX(2px)"}}/>
-                    </button>
-                    <div>
-                      <p className="text-xs font-semibold" style={{color:fullStack?"var(--violet)":"var(--txt-2)"}}>
-                        Full-stack mode {fullStack?"(ON)":"(OFF)"}
-                      </p>
-                      <p className="mt-0.5 text-[10px]" style={{color:"var(--txt-3)"}}>
-                        Also updates <code className="font-mono">agent-api.ts</code> and <code className="font-mono">AgentTester.tsx</code>
-                      </p>
-                    </div>
-                  </div>
-                  <button type="button" disabled={improving||!instruction.trim()} onClick={()=>void submitImprovement()}
-                    className="rounded-xl px-7 py-2.5 text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-40"
-                    style={{background:fullStack?"linear-gradient(135deg,var(--violet),var(--blue))":"linear-gradient(135deg,var(--blue),var(--cyan))",color:"#000"}}>
-                    {improving
-                      ? <span className="flex items-center gap-2">
-                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-black border-t-transparent"/>
-                          {fullStack?"Applying full-stack…":"Applying…"}
-                        </span>
-                      : fullStack?"⚡ Apply (backend + frontend)":"Apply improvement"}
-                  </button>
+          {/* heartbeat */}
+          {heartbeat && (
+            <div style={{ marginTop: 8, borderTop: "1px solid var(--border-dim)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ fontSize: 10, color: "var(--txt-3)", textTransform: "uppercase", letterSpacing: ".08em" }}>Heartbeat</div>
+              <div style={{ fontSize: 11, color: "var(--txt-2)" }}>
+                {heartbeat.total_runs} runs · {heartbeat.topic_count} topics
+              </div>
+              <div style={{ fontSize: 10, color: "var(--txt-3)" }}>last: {timeAgo(heartbeat.last_run)}</div>
+              {heartbeat.next_topic && (
+                <div
+                  style={{
+                    fontSize: 10, color: "var(--amber)", background: "rgba(255,162,0,.08)",
+                    border: "1px solid rgba(255,162,0,.2)", borderRadius: 5, padding: "4px 6px",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  Next: {heartbeat.next_topic.slice(0, 50)}…
                 </div>
+              )}
+            </div>
+          )}
 
-                {improveResult && <ImproveResultCard r={improveResult}/>}
-                {fullStackResult && <FullStackResultCard r={fullStackResult}/>}
+          {/* clear chat */}
+          {tab === "chat" && (
+            <button
+              onClick={() => setMessages([])}
+              style={{
+                marginTop: "auto", padding: "7px", borderRadius: 7, fontSize: 12,
+                background: "transparent", border: "1px solid var(--border-dim)",
+                color: "var(--txt-3)", cursor: "pointer",
+              }}
+            >
+              Clear chat
+            </button>
+          )}
+        </aside>
 
-                {/* Sandbox */}
-                <div className="rounded-2xl p-5" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <div className="mb-4 flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xl"
-                      style={{background:"var(--amber)22",border:"1px solid var(--amber)44"}}>⬡</div>
-                    <div>
-                      <h3 className="font-bold text-base" style={{color:"var(--txt)"}}>Python Sandbox</h3>
-                      <p className="mt-0.5 text-xs" style={{color:"var(--txt-3)"}}>
-                        Run arbitrary Python against the agent's runtime. No network block — use to verify logic before requesting an improvement.
-                      </p>
+        {/* ── MAIN CONTENT ── */}
+        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+
+          {/* ══════ CHAT TAB ══════ */}
+          {tab === "chat" && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+                {messages.length === 0 && (
+                  <div style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    height: "100%", gap: 12, color: "var(--txt-3)",
+                  }}>
+                    <div style={{ fontSize: 48 }}>⬡</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: "var(--txt-2)" }}>HDC Language Model</div>
+                    <div style={{ fontSize: 13, maxWidth: 360, textAlign: "center", lineHeight: 1.6 }}>
+                      Chat with your hyperdimensional brain. It learns from everything it researches and gets smarter over time.
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 8 }}>
+                      {["What is HDC?", "How does bundling work?", "Tell me about one-shot learning"].map(q => (
+                        <button
+                          key={q}
+                          onClick={() => { setChatInput(q); }}
+                          style={{
+                            padding: "6px 12px", borderRadius: 20, fontSize: 12,
+                            background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                            color: "var(--txt-2)", cursor: "pointer",
+                          }}
+                        >
+                          {q}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <textarea
-                    className="mb-3 w-full resize-none rounded-xl px-4 py-3 font-mono text-xs outline-none transition"
-                    style={{background:"var(--elevated)",color:"var(--txt)",border:"1px solid var(--border)",minHeight:"96px"}}
-                    rows={5} value={sandboxCode} onChange={e=>setSandboxCode(e.target.value)}
-                    placeholder={"# Quick sanity check\nfrom super_agent.app.domain.blueprint_status import default_blueprint\nbp = default_blueprint()\nprint(len(list(bp.next_gaps())), 'gaps open')"}
-                  />
-                  <button type="button" disabled={sandboxRunning||!sandboxCode.trim()}
-                    onClick={async()=>{
-                      setSandboxRunning(true);setSandboxResult(null);
-                      try{
-                        const r=await runSandbox(baseUrl||getAgentBaseUrl(),sandboxCode);
-                        setSandboxResult(r);
-                      }catch(e){ setSandboxResult({stdout:"",stderr:String(e),returncode:1,timed_out:false}); }
-                      finally{setSandboxRunning(false);}
-                    }}
-                    className="rounded-xl px-6 py-2 text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-40"
-                    style={{background:"linear-gradient(135deg,var(--amber),var(--teal))",color:"#000"}}>
-                    {sandboxRunning
-                      ? <span className="flex items-center gap-2">
-                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-black border-t-transparent"/>Running…
-                        </span>
-                      : "▶ Run"}
-                  </button>
-                  {sandboxResult && (
-                    <div className="mt-4 rounded-xl overflow-hidden" style={{border:"1px solid var(--border-dim)"}}>
-                      <div className="flex items-center gap-2 px-3 py-2"
-                        style={{background:"var(--elevated)",borderBottom:"1px solid var(--border-dim)"}}>
-                        <span className="font-mono text-[10px] font-bold"
-                          style={{color:sandboxResult.returncode===0?"var(--teal)":"var(--red)"}}>
-                          exit {sandboxResult.returncode}
-                        </span>
-                        {sandboxResult.timed_out && <span className="text-[10px]" style={{color:"var(--amber)"}}>timed out</span>}
-                        <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>{sandboxResult.returncode===0?"✓ ok":"✗ error"}</span>
-                      </div>
-                      {sandboxResult.stdout && (
-                        <pre className="px-3 py-2.5 font-mono text-[11px] whitespace-pre-wrap"
-                          style={{background:"var(--card)",color:"var(--teal)",maxHeight:"200px",overflowY:"auto"}}>
-                          {sandboxResult.stdout}
-                        </pre>
-                      )}
-                      {sandboxResult.stderr && (
-                        <pre className="px-3 py-2.5 font-mono text-[11px] whitespace-pre-wrap"
-                          style={{background:"var(--card)",color:"var(--red)",maxHeight:"200px",overflowY:"auto",borderTop:"1px solid var(--border-dim)"}}>
-                          {sandboxResult.stderr}
-                        </pre>
-                      )}
-                    </div>
+                )}
+                {messages.map(m => <ChatBubble key={m.id} msg={m} />)}
+                {chatLoading && (
+                  <div style={{ display: "flex", gap: 4, padding: "8px 0", paddingLeft: 4 }}>
+                    {[0, 1, 2].map(i => (
+                      <div key={i} className="neural-dot" style={{
+                        width: 7, height: 7, borderRadius: "50%", background: "var(--cyan)",
+                        animationDelay: `${i * 0.16}s`,
+                      }} />
+                    ))}
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+              <div style={{
+                padding: "12px 20px", background: "var(--surface)", borderTop: "1px solid var(--border-dim)",
+                display: "flex", gap: 10,
+              }}>
+                <input
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                  placeholder="Ask the HDC brain anything…"
+                  disabled={chatLoading || !connected}
+                  style={{
+                    flex: 1, padding: "10px 14px", borderRadius: 10,
+                    background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                    color: "var(--txt)", fontSize: 14, outline: "none",
+                    transition: "border-color .2s",
+                  }}
+                />
+                <button
+                  onClick={sendChat}
+                  disabled={chatLoading || !chatInput.trim() || !connected}
+                  style={{
+                    padding: "10px 20px", borderRadius: 10,
+                    background: "var(--blue)", border: "none",
+                    color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                    opacity: (chatLoading || !chatInput.trim() || !connected) ? 0.4 : 1,
+                    transition: "opacity .2s",
+                  }}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ══════ BRAIN TAB ══════ */}
+          {tab === "brain" && (
+            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "grid", gap: 20, gridTemplateColumns: "1fr 1fr", alignContent: "start" }}>
+
+              {/* top stats row */}
+              <div style={{ gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+                <StatCard label="Vocabulary" value={fmt(animVocab)} sub={`D = ${stats ? pipeline?.model.dim?.toLocaleString() : "10,000"}`} color="var(--cyan)" glow />
+                <StatCard label="Training Tokens" value={fmt(animTokens)} sub={`${fmt(animDocs)} docs`} color="var(--green)" glow />
+                <StatCard label="Assoc Memory" value={fmt(animAssoc)} sub="bound pairs" color="var(--violet)" />
+                <StatCard label="HDC Records" value={fmt(stats?.hdc_memory_records ?? 0)} sub="task→solution" color="var(--amber)" />
+              </div>
+
+              {/* analogy solver */}
+              <div style={{ background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "var(--violet)" }}>⊛</span> Analogy Solver
+                  <span style={{ fontSize: 11, color: "var(--txt-3)", fontWeight: 400 }}>A is to B as C is to ?</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto 1fr", gap: 6, alignItems: "center", marginBottom: 12 }}>
+                  {[
+                    { val: analogyA, set: setAnalogyA, ph: "A" },
+                    { val: "→", set: null, ph: "" },
+                    { val: analogyB, set: setAnalogyB, ph: "B" },
+                    { val: "::", set: null, ph: "" },
+                    { val: analogyC, set: setAnalogyC, ph: "C" },
+                  ].map((f, i) =>
+                    f.set ? (
+                      <input
+                        key={i}
+                        value={f.val}
+                        onChange={e => f.set!(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") runAnalogy(); }}
+                        placeholder={f.ph}
+                        style={{
+                          padding: "8px 10px", borderRadius: 8, fontSize: 13,
+                          background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                          color: "var(--txt)", outline: "none", textAlign: "center",
+                          fontFamily: "var(--font-mono)",
+                        }}
+                      />
+                    ) : (
+                      <span key={i} style={{ textAlign: "center", color: "var(--txt-3)", fontFamily: "var(--font-mono)", fontSize: 14 }}>{f.val}</span>
+                    )
                   )}
                 </div>
-
-                {improveHistory.entries.length>0 && (
-                  <div>
-                    <h3 className="mb-3 text-sm font-bold" style={{color:"var(--txt)"}}>
-                      History ({improveHistory.entries.length})
-                    </h3>
-                    <div className="flex flex-col gap-2">
-                      {improveHistory.entries.map((e,i)=>(
-                        <div key={i} className="rounded-xl p-3.5"
-                          style={{background:"var(--card)",border:`1px solid ${e.ok?"var(--teal)33":"var(--red)33"}`}}>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span style={{color:e.ok?"var(--teal)":"var(--red)",fontWeight:700}}>{e.ok?"✓":"✗"}</span>
-                              <span className="text-sm" style={{color:"var(--txt)"}}>{e.instruction}</span>
-                            </div>
-                            <span className="shrink-0 text-[10px]" style={{color:"var(--txt-3)"}}>{fmtTs(e.timestamp)}</span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2">
-                            <code className="font-mono text-[10px]" style={{color:"var(--txt-2)"}}>{e.target_file}</code>
-                            {e.committed && <Pill label={`${e.commit_hash?.slice(0,8)||"committed"}`} color="blue"/>}
-                            {e.error && <span className="text-[10px]" style={{color:"var(--red)"}}>{e.error}</span>}
-                          </div>
-                        </div>
+                <button
+                  onClick={runAnalogy}
+                  disabled={analogyLoading || !analogyA || !analogyB || !analogyC}
+                  style={{
+                    width: "100%", padding: "8px", borderRadius: 8, fontSize: 13,
+                    background: "var(--elevated)", border: "1px solid var(--border)",
+                    color: "var(--violet)", cursor: "pointer",
+                    opacity: analogyLoading ? 0.6 : 1,
+                  }}
+                >
+                  {analogyLoading ? "Solving…" : "Solve Analogy"}
+                </button>
+                {analogyResult && (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 11, color: "var(--txt-3)", marginBottom: 6, fontFamily: "var(--font-mono)" }}>{analogyResult.query}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {analogyResult.candidates.map((c, i) => (
+                        <SimPill key={i} word={c.word} similarity={c.similarity} />
                       ))}
                     </div>
                   </div>
                 )}
               </div>
-            )}
 
-            {/* ──── CODEBASE TAB ───────────────────────────────────────────── */}
-            {tab==="codebase" && (
-              <div className="flex flex-col gap-4">
-                <div className="flex items-center gap-3 rounded-xl px-4 py-3"
-                  style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <span className="text-xl">◫</span>
-                  <div>
-                    <p className="text-sm font-bold" style={{color:"var(--txt)"}}>Live codebase snapshot</p>
-                    <p className="text-[10px]" style={{color:"var(--txt-3)"}}>
-                      Injected into every system instruction so the agent knows its own code.
-                      {codebase&&` · ${(codebase.length/1024).toFixed(1)} KB`}
-                    </p>
-                  </div>
-                  <button type="button" disabled={codebaseLoading}
-                    onClick={async()=>{setCodebaseLoading(true);await refreshCodebase(baseUrl||getAgentBaseUrl());await loadCodebase();}}
-                    className="ml-auto rounded-xl px-3 py-1.5 text-xs font-semibold transition hover:opacity-80 disabled:opacity-40"
-                    style={{background:"var(--elevated)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}>
-                    {codebaseLoading?"Scanning…":"↺ Rescan"}
+              {/* word similarity */}
+              <div style={{ background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "var(--teal)" }}>⊹</span> Semantic Similarity
+                </div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  <input
+                    value={similarWord}
+                    onChange={e => setSimilarWord(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") runSimilar(); }}
+                    placeholder="Enter a word…"
+                    style={{
+                      flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 13,
+                      background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                      color: "var(--txt)", outline: "none", fontFamily: "var(--font-mono)",
+                    }}
+                  />
+                  <button
+                    onClick={runSimilar}
+                    disabled={similarLoading || !similarWord}
+                    style={{
+                      padding: "8px 14px", borderRadius: 8, fontSize: 12,
+                      background: "var(--elevated)", border: "1px solid var(--border)",
+                      color: "var(--teal)", cursor: "pointer",
+                    }}
+                  >
+                    {similarLoading ? "…" : "Search"}
                   </button>
                 </div>
-                <pre className="max-h-[72vh] overflow-auto rounded-2xl px-5 py-4 font-mono text-[11px] leading-relaxed"
-                  style={{background:"var(--card)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}>
-                  {codebaseLoading?"Scanning…":codebase||"Click Rescan to generate CODEBASE.md."}
-                </pre>
+                {similarResult && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {similarResult.similar.length === 0 ? (
+                      <div style={{ fontSize: 12, color: "var(--txt-3)" }}>No similar words found. Train more data first.</div>
+                    ) : similarResult.similar.map((s, i) => (
+                      <SimPill key={i} word={s.word} similarity={s.similarity} />
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* ──── STATUS TAB ─────────────────────────────────────────────── */}
-            {tab==="status" && (
-              <div className="flex flex-col gap-5">
-                {/* metrics */}
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {[
-                    {label:"Status",value:health.status,color:health.status==="ok"?"var(--green)":"var(--red)"},
-                    {label:"Gemini keys",value:health.gemini?"Active":"—",color:health.gemini?"var(--teal)":"var(--txt-3)"},
-                    {label:"Research runs",value:heartbeat?heartbeat.total_runs.toString():"—",color:"var(--cyan)"},
-                    {label:"Topics tracked",value:heartbeat?heartbeat.topic_count.toString():"—",color:"var(--blue)"},
-                  ].map(m=>(
-                    <div key={m.label} className="rounded-2xl p-4"
-                      style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
-                      <p className="text-[10px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>{m.label}</p>
-                      <p className="mt-1 text-xl font-bold" style={{color:m.color}}>{m.value}</p>
+              {/* vocab browser */}
+              <div style={{ gridColumn: "1 / -1", background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "var(--cyan)" }}>⊞</span> Vocabulary Browser
+                  </div>
+                  <span style={{ fontSize: 11, color: "var(--txt-3)" }}>
+                    {vocab?.vocab_size.toLocaleString() ?? "—"} words in memory
+                  </span>
+                  <input
+                    value={vocabFilter}
+                    onChange={e => setVocabFilter(e.target.value)}
+                    placeholder="filter…"
+                    style={{
+                      marginLeft: "auto", padding: "4px 10px", borderRadius: 6, fontSize: 12,
+                      background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                      color: "var(--txt)", outline: "none", width: 140, fontFamily: "var(--font-mono)",
+                    }}
+                  />
+                </div>
+                <div style={{
+                  display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 180, overflowY: "auto",
+                }}>
+                  {(vocab?.sample ?? [])
+                    .filter(w => !vocabFilter || w.includes(vocabFilter.toLowerCase()))
+                    .map(w => (
+                      <span
+                        key={w}
+                        onClick={() => { setSimilarWord(w); setTab("brain"); }}
+                        style={{
+                          padding: "3px 8px", borderRadius: 5, fontSize: 12,
+                          background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                          color: "var(--txt-2)", cursor: "pointer", fontFamily: "var(--font-mono)",
+                          transition: "border-color .15s",
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--cyan)")}
+                        onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border-dim)")}
+                      >
+                        {w}
+                      </span>
+                    ))
+                  }
+                  {vocab === null && (
+                    <div style={{ fontSize: 12, color: "var(--txt-3)" }}>Loading vocabulary…</div>
+                  )}
+                </div>
+              </div>
+
+              {/* memory records */}
+              {memory && memory.records.length > 0 && (
+                <div style={{ gridColumn: "1 / -1", background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--txt-2)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "var(--amber)" }}>◈</span> Associative Memory Records
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {memory.records.slice(0, 10).map((r, i) => (
+                      <div key={i} style={{
+                        display: "flex", gap: 10, alignItems: "center",
+                        padding: "6px 10px", background: "var(--elevated)", borderRadius: 7,
+                        border: "1px solid var(--border-dim)", fontSize: 12,
+                      }}>
+                        <span style={{ color: MODE_COLOR[r.route] ?? "var(--txt-2)", fontFamily: "var(--font-mono)", fontSize: 10, flexShrink: 0 }}>
+                          {r.route}
+                        </span>
+                        <span style={{ color: "var(--txt-2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {r.task_fp}
+                        </span>
+                        <span style={{ color: "var(--txt-3)", flexShrink: 0, fontSize: 11 }}>
+                          ×{r.retrieval_count}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════ RESEARCH TAB ══════ */}
+          {tab === "research" && (
+            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "grid", gap: 20, gridTemplateColumns: "1fr 1fr", alignContent: "start" }}>
+
+              {/* pipeline stats */}
+              <div style={{ gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+                <StatCard
+                  label="Docs Trained"
+                  value={fmt(pipeline?.pipeline.documents_trained ?? 0)}
+                  sub={`${fmt(pipeline?.pipeline.documents_skipped ?? 0)} skipped`}
+                  color="var(--green)"
+                  glow={!!pipeline?.pipeline.documents_trained}
+                />
+                <StatCard
+                  label="Research Runs"
+                  value={pipeline?.pipeline.research_runs ?? 0}
+                  sub={pipeline?.pipeline.last_run ? timeAgo(pipeline.pipeline.last_run) : "—"}
+                  color="var(--cyan)"
+                />
+                <StatCard
+                  label="Unique Docs"
+                  value={fmt(pipeline?.pipeline.unique_docs_seen ?? 0)}
+                  sub="content hashes"
+                  color="var(--violet)"
+                />
+                <StatCard
+                  label="Tokens / Run"
+                  value={pipeline && pipeline.pipeline.research_runs > 0
+                    ? fmt(Math.round((pipeline.pipeline.tokens_trained) / pipeline.pipeline.research_runs))
+                    : "—"}
+                  sub="avg per research run"
+                  color="var(--amber)"
+                />
+              </div>
+
+              {/* ── TRAINING FEED ── */}
+              <div style={{ gridColumn: "1 / -1", background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "var(--green)" }}>▸</span> Live Training Feed
+                  </div>
+                  {researchRunning && (
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      {[0, 1, 2].map(i => (
+                        <div key={i} className="neural-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--cyan)", animationDelay: `${i * 0.16}s` }} />
+                      ))}
+                      <span style={{ fontSize: 11, color: "var(--cyan)", marginLeft: 4 }}>scraping…</span>
                     </div>
+                  )}
+                  <div style={{ marginLeft: "auto", fontSize: 11, color: "var(--txt-3)" }}>
+                    {pipeline ? (
+                      <>dim <span style={{ color: "var(--txt-2)", fontFamily: "var(--font-mono)" }}>{pipeline.model.dim?.toLocaleString()}</span>
+                      {" · "}ctx <span style={{ color: "var(--txt-2)", fontFamily: "var(--font-mono)" }}>{pipeline.model.context_size}</span></>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* vocab growth bar */}
+                {stats && stats.vocab_size > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--txt-3)", marginBottom: 5 }}>
+                      <span>Vocabulary growth</span>
+                      <span style={{ fontFamily: "var(--font-mono)", color: "var(--cyan)" }}>
+                        {stats.vocab_size.toLocaleString()} / ~50,000 target
+                      </span>
+                    </div>
+                    <div style={{ height: 6, background: "var(--elevated)", borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%",
+                        width: `${Math.min((stats.vocab_size / 50000) * 100, 100)}%`,
+                        background: "linear-gradient(90deg, var(--cyan), var(--blue))",
+                        borderRadius: 3,
+                        transition: "width 1s",
+                      }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--txt-3)", marginTop: 4 }}>
+                      <span>0</span>
+                      <span>10K</span>
+                      <span>25K</span>
+                      <span>50K</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* feed entries */}
+                <div style={{
+                  display: "flex", flexDirection: "column", gap: 4,
+                  maxHeight: 220, overflowY: "auto",
+                }}>
+                  {trainingFeed.length === 0 ? (
+                    <div style={{
+                      padding: "24px", textAlign: "center", color: "var(--txt-3)",
+                      fontSize: 13, background: "var(--elevated)", borderRadius: 8,
+                    }}>
+                      No training activity yet. Research a topic or train on text below to see the feed.
+                    </div>
+                  ) : trainingFeed.map((entry, i) => {
+                    const colors = {
+                      research: "var(--cyan)",
+                      heartbeat: "var(--green)",
+                      train: "var(--teal)",
+                      info: "var(--txt-3)",
+                    };
+                    const icons = { research: "⊞", heartbeat: "⬡", train: "⊕", info: "◦" };
+                    const c = colors[entry.type];
+                    return (
+                      <div key={i} className={i === 0 ? "slide-up" : undefined} style={{
+                        display: "flex", gap: 10, alignItems: "flex-start",
+                        padding: "7px 10px", borderRadius: 8,
+                        background: i === 0 ? `${c}0d` : "var(--elevated)",
+                        border: `1px solid ${i === 0 ? `${c}33` : "var(--border-dim)"}`,
+                        fontSize: 12,
+                      }}>
+                        <span style={{ color: c, fontFamily: "var(--font-mono)", flexShrink: 0, marginTop: 1 }}>
+                          {icons[entry.type]}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ color: c, fontWeight: 600 }}>{entry.topic}</span>
+                          {" "}
+                          <span style={{ color: "var(--txt-2)" }}>{entry.detail}</span>
+                        </div>
+                        <span style={{ fontSize: 10, color: "var(--txt-3)", flexShrink: 0, fontFamily: "var(--font-mono)" }}>
+                          {entry.time}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* research a topic */}
+              <div style={{ background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "var(--cyan)" }}>⊞</span> Research a Topic
+                </div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  <input
+                    value={researchInput}
+                    onChange={e => setResearchInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") runResearch(researchInput); }}
+                    placeholder="e.g. quantum computing overview"
+                    disabled={researchRunning}
+                    style={{
+                      flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 13,
+                      background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                      color: "var(--txt)", outline: "none",
+                    }}
+                  />
+                  <button
+                    onClick={() => runResearch(researchInput)}
+                    disabled={researchRunning || !researchInput.trim()}
+                    style={{
+                      padding: "8px 16px", borderRadius: 8, fontSize: 12,
+                      background: "var(--elevated)", border: "1px solid var(--border)",
+                      color: "var(--cyan)", cursor: "pointer",
+                      opacity: (researchRunning || !researchInput.trim()) ? 0.5 : 1,
+                    }}
+                  >
+                    {researchRunning ? "Scraping…" : "Research"}
+                  </button>
+                </div>
+
+                {/* heartbeat trigger */}
+                <button
+                  onClick={triggerHeartbeatNow}
+                  disabled={researchRunning}
+                  style={{
+                    width: "100%", padding: "8px", borderRadius: 8, fontSize: 12,
+                    background: researchRunning ? "var(--elevated)" : "rgba(0,217,126,.1)",
+                    border: `1px solid ${researchRunning ? "var(--border-dim)" : "var(--green)"}`,
+                    color: researchRunning ? "var(--txt-3)" : "var(--green)", cursor: "pointer",
+                    marginBottom: 12,
+                  }}
+                >
+                  ⬡ Trigger Heartbeat Now
+                </button>
+
+                {/* activity log */}
+                <div style={{ fontSize: 10, color: "var(--txt-3)", marginBottom: 6 }}>Activity Log</div>
+                <div style={{
+                  background: "var(--void)", borderRadius: 8, padding: "8px 10px",
+                  border: "1px solid var(--border-dim)", height: 140, overflowY: "auto",
+                  fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.7,
+                }}>
+                  {researchLog.length === 0
+                    ? <span style={{ color: "var(--txt-3)" }}>No activity yet…</span>
+                    : researchLog.map((l, i) => (
+                        <div key={i} style={{ color: l.includes("✓") ? "var(--green)" : l.includes("✗") ? "var(--red)" : "var(--txt-2)" }}>
+                          {l}
+                        </div>
+                      ))
+                  }
+                </div>
+              </div>
+
+              {/* train on text */}
+              <div style={{ background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "var(--teal)" }}>⊕</span> Train on Text
+                  <span style={{ fontSize: 11, color: "var(--txt-3)", fontWeight: 400 }}>one-shot learning</span>
+                </div>
+                <textarea
+                  value={trainTextInput}
+                  onChange={e => setTrainTextInput(e.target.value)}
+                  placeholder="Paste any text to train the model on it instantly…"
+                  rows={6}
+                  style={{
+                    width: "100%", padding: "10px 12px", borderRadius: 8, fontSize: 13,
+                    background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                    color: "var(--txt)", outline: "none", resize: "vertical",
+                    fontFamily: "var(--font-sans)", lineHeight: 1.6,
+                    marginBottom: 10,
+                  }}
+                />
+                <button
+                  onClick={runTrainText}
+                  disabled={trainTextLoading || !trainTextInput.trim()}
+                  style={{
+                    width: "100%", padding: "9px", borderRadius: 8, fontSize: 13,
+                    background: "rgba(0,184,144,.1)", border: "1px solid var(--teal)",
+                    color: "var(--teal)", cursor: "pointer",
+                    opacity: (trainTextLoading || !trainTextInput.trim()) ? 0.5 : 1,
+                  }}
+                >
+                  {trainTextLoading ? "Training…" : "Train Model"}
+                </button>
+                {trainTextResult && (
+                  <div style={{
+                    marginTop: 10, fontSize: 12, padding: "8px 10px", borderRadius: 7,
+                    background: trainTextResult.startsWith("✓") ? "rgba(0,217,126,.08)" : "rgba(255,69,102,.08)",
+                    border: `1px solid ${trainTextResult.startsWith("✓") ? "var(--green)" : "var(--red)"}`,
+                    color: trainTextResult.startsWith("✓") ? "var(--green)" : "var(--red)",
+                    fontFamily: "var(--font-mono)",
+                  }}>
+                    {trainTextResult}
+                  </div>
+                )}
+              </div>
+
+              {/* research topics */}
+              <div style={{ gridColumn: "1 / -1", background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 12, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "var(--amber)" }}>◎</span> Heartbeat Topics
+                  </div>
+                  <span style={{ fontSize: 11, color: "var(--txt-3)" }}>
+                    rotated every {heartbeat?.topics?.length ?? 0} topics
+                  </span>
+                  <button
+                    onClick={() => {
+                      setTopicsEdit((heartbeat?.topics ?? []).join("\n"));
+                      setTopicsEditMode(v => !v);
+                    }}
+                    style={{
+                      marginLeft: "auto", padding: "4px 10px", borderRadius: 6, fontSize: 11,
+                      background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                      color: "var(--txt-2)", cursor: "pointer",
+                    }}
+                  >
+                    {topicsEditMode ? "Cancel" : "Edit"}
+                  </button>
+                  {topicsEditMode && (
+                    <button
+                      onClick={saveTopics}
+                      style={{
+                        padding: "4px 10px", borderRadius: 6, fontSize: 11,
+                        background: "rgba(0,212,255,.1)", border: "1px solid var(--cyan)",
+                        color: "var(--cyan)", cursor: "pointer",
+                      }}
+                    >
+                      Save
+                    </button>
+                  )}
+                </div>
+
+                {topicsEditMode ? (
+                  <textarea
+                    value={topicsEdit}
+                    onChange={e => setTopicsEdit(e.target.value)}
+                    rows={8}
+                    placeholder="One topic per line…"
+                    style={{
+                      width: "100%", padding: "10px 12px", borderRadius: 8, fontSize: 13,
+                      background: "var(--elevated)", border: "1px solid var(--border)",
+                      color: "var(--txt)", outline: "none", resize: "vertical",
+                      fontFamily: "var(--font-sans)", lineHeight: 1.7,
+                    }}
+                  />
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {(heartbeat?.topics ?? []).map((t, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "8px 12px", borderRadius: 8,
+                          background: i === (heartbeat?.next_topic_index ?? -1) ? "rgba(0,212,255,.06)" : "var(--elevated)",
+                          border: `1px solid ${i === (heartbeat?.next_topic_index ?? -1) ? "var(--border)" : "var(--border-dim)"}`,
+                        }}
+                      >
+                        <span style={{
+                          width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 10, fontFamily: "var(--font-mono)",
+                          background: i === (heartbeat?.next_topic_index ?? -1) ? "var(--cyan)" : "var(--card)",
+                          color: i === (heartbeat?.next_topic_index ?? -1) ? "#000" : "var(--txt-3)",
+                        }}>
+                          {i + 1}
+                        </span>
+                        <span style={{ fontSize: 13, color: i === (heartbeat?.next_topic_index ?? -1) ? "var(--txt)" : "var(--txt-2)" }}>
+                          {t}
+                        </span>
+                        {i === (heartbeat?.next_topic_index ?? -1) && (
+                          <span className="blink" style={{ marginLeft: "auto", fontSize: 10, color: "var(--cyan)" }}>NEXT</span>
+                        )}
+                        <button
+                          onClick={() => runResearch(t)}
+                          disabled={researchRunning}
+                          style={{
+                            marginLeft: i === (heartbeat?.next_topic_index ?? -1) ? 0 : "auto",
+                            padding: "3px 8px", borderRadius: 5, fontSize: 10,
+                            background: "transparent", border: "1px solid var(--border-dim)",
+                            color: "var(--txt-3)", cursor: "pointer",
+                          }}
+                        >
+                          Train
+                        </button>
+                      </div>
+                    ))}
+                    {(!heartbeat?.topics || heartbeat.topics.length === 0) && (
+                      <div style={{ fontSize: 13, color: "var(--txt-3)", padding: 8 }}>
+                        No topics set. Click Edit to add research topics.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ══════ GENERATE TAB ══════ */}
+          {tab === "generate" && (
+            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+
+              <div style={{ background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 14, padding: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: "var(--txt-2)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "var(--cyan)" }}>≋</span> Text Generation
+                  <span style={{ fontSize: 12, fontWeight: 400, color: "var(--txt-3)" }}>
+                    {fmt(stats?.vocab_size ?? 0)} vocab · {fmt(stats?.assoc_memory ?? 0)} associations
+                  </span>
+                </div>
+
+                <label style={{ display: "block", fontSize: 12, color: "var(--txt-3)", marginBottom: 6 }}>Seed text</label>
+                <textarea
+                  value={genSeed}
+                  onChange={e => setGenSeed(e.target.value)}
+                  placeholder="The quick brown fox…"
+                  rows={3}
+                  style={{
+                    width: "100%", padding: "10px 14px", borderRadius: 10, fontSize: 14,
+                    background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                    color: "var(--txt)", outline: "none", resize: "vertical",
+                    fontFamily: "var(--font-sans)", lineHeight: 1.6, marginBottom: 16,
+                  }}
+                />
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 18 }}>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--txt-3)", marginBottom: 8 }}>
+                      <span>Temperature</span>
+                      <span style={{ color: "var(--cyan)", fontFamily: "var(--font-mono)" }}>{genTemp.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range" min={0.1} max={2.0} step={0.05}
+                      value={genTemp}
+                      onChange={e => setGenTemp(parseFloat(e.target.value))}
+                      style={{ width: "100%" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--txt-3)", marginTop: 4 }}>
+                      <span>Focused</span>
+                      <span>Creative</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--txt-3)", marginBottom: 8 }}>
+                      <span>Max tokens</span>
+                      <span style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>{genTokens}</span>
+                    </div>
+                    <input
+                      type="range" min={10} max={200} step={5}
+                      value={genTokens}
+                      onChange={e => setGenTokens(parseInt(e.target.value))}
+                      style={{ width: "100%" }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--txt-3)", marginTop: 4 }}>
+                      <span>10</span>
+                      <span>200</span>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={runGenerate}
+                  disabled={genLoading || !genSeed.trim() || !connected}
+                  style={{
+                    width: "100%", padding: "11px", borderRadius: 10, fontSize: 14,
+                    background: "linear-gradient(135deg, rgba(0,212,255,.15), rgba(61,130,255,.15))",
+                    border: "1px solid var(--border)",
+                    color: "var(--cyan)", cursor: "pointer", fontWeight: 600,
+                    opacity: (genLoading || !genSeed.trim()) ? 0.5 : 1,
+                  }}
+                >
+                  {genLoading ? "Generating…" : "Generate"}
+                </button>
+              </div>
+
+              {genResult && (
+                <div className="fade-in" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 14, padding: 20 }}>
+                  <div style={{ fontSize: 12, color: "var(--txt-3)", marginBottom: 8 }}>Generated output</div>
+                  <div style={{
+                    fontSize: 15, lineHeight: 1.8, color: "var(--txt)",
+                    background: "var(--elevated)", borderRadius: 10, padding: "14px 16px",
+                    border: "1px solid var(--border-dim)", whiteSpace: "pre-wrap",
+                  }}>
+                    <span style={{ color: "var(--txt-3)" }}>{genResult.seed} </span>
+                    <span style={{ color: "var(--cyan)" }}>{genResult.generated || "(no continuation yet — train more data)"}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* suggestions */}
+              <div style={{ background: "var(--card)", border: "1px solid var(--border-dim)", borderRadius: 14, padding: 20 }}>
+                <div style={{ fontSize: 12, color: "var(--txt-3)", marginBottom: 12 }}>Try these seeds</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {[
+                    "hyperdimensional computing uses",
+                    "the binding operation connects",
+                    "one-shot learning enables",
+                    "the associative memory stores",
+                    "vector symbolic architectures",
+                    "brain inspired computing",
+                  ].map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setGenSeed(s)}
+                      style={{
+                        padding: "6px 12px", borderRadius: 20, fontSize: 12,
+                        background: "var(--elevated)", border: "1px solid var(--border-dim)",
+                        color: "var(--txt-2)", cursor: "pointer", fontFamily: "var(--font-mono)",
+                        transition: "border-color .15s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--cyan)")}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border-dim)")}
+                    >
+                      {s}
+                    </button>
                   ))}
                 </div>
-
-                {/* blueprint */}
-                <div className="rounded-2xl overflow-hidden"
-                  style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-                    <span className="text-base">◈</span>
-                    <p className="font-bold text-sm" style={{color:"var(--txt)"}}>Blueprint</p>
-                    {blueprint && (
-                      <div className="ml-2 flex gap-3 text-xs">
-                        <span style={{color:"var(--teal)"}}>{blueprint.items.filter(i=>i.status==="done").length} done</span>
-                        <span style={{color:"var(--amber)"}}>{blueprint.items.filter(i=>i.status==="partial").length} partial</span>
-                        <span style={{color:"var(--txt-3)"}}>{gaps.length} todo</span>
-                      </div>
-                    )}
-                    <button type="button" onClick={()=>void loadStatus()}
-                      className="ml-auto rounded-lg px-2 py-1 text-xs transition hover:opacity-70"
-                      style={{background:"var(--elevated)",color:"var(--txt-3)"}}>↺</button>
-                  </div>
-                  {blueprint ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr style={{borderBottom:"1px solid var(--border-dim)",background:"var(--elevated)"}}>
-                            {["Feature","Status","Notes"].map(h=>(
-                              <th key={h} className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider text-[9px]"
-                                style={{color:"var(--txt-3)"}}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {blueprint.items.map(item=>(
-                            <tr key={item.id} style={{borderBottom:"1px solid var(--border-dim)"}}>
-                              <td className="px-4 py-2.5 font-medium" style={{color:"var(--txt)"}}>{item.title}</td>
-                              <td className="px-4 py-2.5">
-                                <Pill label={item.status}
-                                  color={item.status==="done"?"teal":item.status==="partial"?"amber":"red"}/>
-                              </td>
-                              <td className="px-4 py-2.5" style={{color:"var(--txt-3)"}}>{item.notes}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="px-4 py-6 text-sm" style={{color:"var(--txt-3)"}}>Click ↺ to load.</p>
-                  )}
-                </div>
-
-                {/* SICA live panel */}
-                <div className="rounded-2xl overflow-hidden"
-                  style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-                    <span className="text-base">⚙</span>
-                    <p className="font-bold text-sm" style={{color:"var(--txt)"}}>SICA — Self-Improvement Cycle</p>
-                    {sicaStatus && (
-                      <div className="ml-2 flex gap-3 text-xs">
-                        <span style={{color:"var(--cyan)"}}>score {(sicaStatus.benchmark.score*100).toFixed(0)}%</span>
-                        <span style={{color:"var(--amber)"}}>{sicaStatus.plan.todos.length} gaps</span>
-                      </div>
-                    )}
-                    <button type="button" disabled={sicaRunning} onClick={async()=>{
-                      setSicaRunning(true);
-                      try {
-                        const res=await runSicaCycle(baseUrl||getAgentBaseUrl());
-                        setSicaJobId(res.job_id);
-                        // poll until done
-                        const b=baseUrl||getAgentBaseUrl();
-                        const tick=setInterval(async()=>{
-                          const jbs=await listJobs(b,20);
-                          setJobs(jbs);
-                          const j=jbs.find(j=>j.job_id===res.job_id);
-                          if(!j||j.phase==="COMPLETE"||j.phase==="complete"){
-                            clearInterval(tick);setSicaRunning(false);
-                            await loadStatus();
-                          }
-                        },3000);
-                      } catch(e){
-                        console.error(e);setSicaRunning(false);
-                      }
-                    }}
-                      className="ml-auto flex items-center gap-1.5 rounded-xl px-4 py-1.5 text-xs font-bold transition hover:scale-[1.02] disabled:opacity-40"
-                      style={{background:"linear-gradient(135deg,var(--violet),var(--blue))",color:"#000"}}>
-                      {sicaRunning
-                        ? <><span className="h-3 w-3 animate-spin rounded-full border-2 border-black border-t-transparent"/>Running…</>
-                        : "▶ Run cycle"}
-                    </button>
-                  </div>
-                  {sicaJobId && (
-                    <div className="px-4 py-2 text-[10px] font-mono" style={{color:"var(--txt-3)",borderBottom:"1px solid var(--border-dim)"}}>
-                      job {sicaJobId.slice(0,20)}… {sicaRunning?"· running":"· done"}
-                    </div>
-                  )}
-                  {sicaStatus ? (
-                    <div className="p-4 flex flex-col gap-4">
-                      {/* benchmark bar */}
-                      <div>
-                        <div className="flex justify-between mb-1.5 text-xs">
-                          <span style={{color:"var(--txt-3)"}}>Test pass rate</span>
-                          <span style={{color:"var(--cyan)",fontWeight:700}}>{sicaStatus.benchmark.passed}/{sicaStatus.benchmark.total} ({(sicaStatus.benchmark.score*100).toFixed(0)}%)</span>
-                        </div>
-                        <div className="h-2 rounded-full overflow-hidden" style={{background:"var(--elevated)"}}>
-                          <div className="h-full rounded-full transition-all"
-                            style={{width:`${(sicaStatus.benchmark.score*100).toFixed(0)}%`,
-                              background:`linear-gradient(90deg,var(--cyan),var(--blue))`}}/>
-                        </div>
-                      </div>
-                      {/* priority gaps */}
-                      {sicaStatus.plan.todos.length>0 && (
-                        <div>
-                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Next gaps to patch</p>
-                          <div className="flex flex-col gap-1.5">
-                            {sicaStatus.plan.todos.slice(0,5).map(t=>(
-                              <div key={t.id} className="flex items-start gap-3 rounded-xl px-3 py-2.5"
-                                style={{background:"var(--card)",border:"1px solid var(--border-dim)"}}>
-                                <span className="mt-0.5 shrink-0 h-4 w-4 rounded flex items-center justify-center text-[9px] font-bold"
-                                  style={{background:"var(--violet)22",color:"var(--violet)",border:"1px solid var(--violet)44"}}>
-                                  {t.priority}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-xs font-medium truncate" style={{color:"var(--txt)"}}>{t.task}</p>
-                                  {t.notes && <p className="text-[10px] mt-0.5 truncate" style={{color:"var(--txt-3)"}}>{t.notes}</p>}
-                                </div>
-                                <button type="button" disabled={sicaRunning}
-                                  onClick={async()=>{
-                                    setSicaRunning(true);
-                                    try{
-                                      const res=await runSicaCycle(baseUrl||getAgentBaseUrl(),t.id);
-                                      setSicaJobId(res.job_id);
-                                      const b=baseUrl||getAgentBaseUrl();
-                                      const tick=setInterval(async()=>{
-                                        const jbs=await listJobs(b,20);setJobs(jbs);
-                                        const j=jbs.find(j=>j.job_id===res.job_id);
-                                        if(!j||j.phase==="COMPLETE"||j.phase==="complete"){
-                                          clearInterval(tick);setSicaRunning(false);await loadStatus();
-                                        }
-                                      },3000);
-                                    }catch(e){console.error(e);setSicaRunning(false);}
-                                  }}
-                                  className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold transition hover:opacity-80 disabled:opacity-40"
-                                  style={{background:"var(--violet)22",color:"var(--violet)",border:"1px solid var(--violet)44"}}>
-                                  Fix
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {/* recent commits */}
-                      {sicaStatus.recent_commits.length>0 && (
-                        <div>
-                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest" style={{color:"var(--txt-3)"}}>Recent commits</p>
-                          <div className="flex flex-col gap-1">
-                            {sicaStatus.recent_commits.map(c=>(
-                              <div key={c.hash} className="flex items-center gap-2 rounded-lg px-3 py-1.5"
-                                style={{background:"var(--card)"}}>
-                                <code className="shrink-0 font-mono text-[10px]" style={{color:"var(--blue)"}}>{c.hash.slice(0,7)}</code>
-                                <span className="truncate text-[11px]" style={{color:"var(--txt-2)"}}>{c.subject}</span>
-                                <span className="shrink-0 text-[9px] ml-auto" style={{color:"var(--txt-3)"}}>{c.date.slice(0,10)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="px-4 py-5 text-sm" style={{color:"var(--txt-3)"}}>
-                      {sica||"Click ↺ to load SICA status."}
-                    </p>
-                  )}
-                </div>
-
-                {/* recent jobs */}
-                {jobs.length>0 && (
-                  <div className="rounded-2xl overflow-hidden" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                    <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-                      <span className="text-base">⟳</span>
-                      <p className="font-bold text-sm" style={{color:"var(--txt)"}}>Recent Jobs</p>
-                      <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>{jobs.length} total</span>
-                    </div>
-                    <div className="divide-y" style={{borderColor:"var(--border-dim)"}}>
-                      {jobs.slice(0,8).map(j=>(
-                        <div key={j.job_id} className="px-4 py-2.5 flex items-start gap-3">
-                          <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold mt-0.5 uppercase"
-                            style={{
-                              background:j.job_type==="sica"?"var(--violet)22":j.job_type==="improve"?"var(--amber)22":"var(--blue)22",
-                              color:j.job_type==="sica"?"var(--violet)":j.job_type==="improve"?"var(--amber)":"var(--blue)",
-                            }}>{j.job_type}</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs truncate" style={{color:"var(--txt)"}}>{j.prompt}</p>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[9px] font-semibold uppercase" style={{
-                                color:j.phase==="COMPLETE"||j.phase==="complete"
-                                  ?(j.error?"var(--red)":"var(--teal)")
-                                  :"var(--amber)",
-                              }}>{j.phase}</span>
-                              {j.error && <span className="text-[9px]" style={{color:"var(--red)"}}>{j.error.slice(0,60)}</span>}
-                              <span className="ml-auto text-[9px]" style={{color:"var(--txt-3)"}}>{j.started_at?.slice(0,16).replace("T"," ")}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* endpoints */}
-                <div className="rounded-2xl p-4" style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-                  <p className="mb-3 font-bold text-sm" style={{color:"var(--txt)"}}>API Endpoints</p>
-                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                    {([
-                      ["GET","/health"],["GET","/api/v1/status"],["GET","/api/v1/gaps"],
-                      ["POST","/api/v1/chat"],["POST","/api/v1/agent/start"],
-                      ["GET","/api/v1/agent/jobs/:id"],["POST","/api/v1/sympy/run"],
-                      ["POST","/api/v1/route-intent"],["GET","/api/v1/codebase/snapshot"],
-                      ["POST","/api/v1/codebase/refresh"],["POST","/api/v1/improve"],
-                      ["POST","/api/v1/improve/fullstack"],["POST","/api/v1/improve/async"],
-                      ["GET","/api/v1/improve/history"],
-                      ["POST","/api/v1/sica/run"],["POST","/api/v1/sica/gap"],
-                      ["GET","/api/v1/sica/status"],["GET","/api/v1/sica/summary"],
-                      ["GET","/api/v1/jobs"],["GET","/api/v1/jobs/:id"],
-                      ["POST","/api/v1/research/trigger"],["GET","/api/v1/heartbeat/status"],
-                      ["POST","/api/v1/sandbox/run"],["POST","/api/v1/notify/test"],
-                      ["GET","/api/v1/location"],
-                    ] as [string,string][]).map(([method,path])=>(
-                      <div key={path} className="flex items-center gap-2 rounded-xl px-3 py-2"
-                        style={{background:"var(--card)"}}>
-                        <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase"
-                          style={{background:method==="GET"?"var(--blue)22":"var(--teal)22",
-                            color:method==="GET"?"var(--blue)":"var(--teal)"}}>
-                          {method}
-                        </span>
-                        <span className="font-mono text-[10px]" style={{color:"var(--txt-2)"}}>{path}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
-            )}
-
-          </div>
+            </div>
+          )}
         </main>
       </div>
-
-      {/* ── MOBILE BOTTOM NAV ─────────────────────────────────────────────── */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 flex z-50"
-        style={{background:"var(--surface)",borderTop:"1px solid var(--border-dim)"}}>
-        {TABS.map(t=>(
-          <MobileNavItem key={t.id} id={t.id} label={t.label} icon={t.icon}
-            active={tab===t.id} badge={t.badge} onClick={()=>setTab(t.id)}/>
-        ))}
-      </nav>
-    </div>
-  );
-}
-
-// ─── improve result cards ─────────────────────────────────────────────────────
-function ImproveResultCard({r}:{r:ImproveResult}){
-  const changes=r.file_changes?.length
-    ? r.file_changes
-    : [{file:r.target_file,new_code:r.new_code,error:r.error,committed:r.committed,commit_hash:r.commit_hash,reason:"",ast_ok:r.ast_ok}];
-  return (
-    <div className="rounded-2xl overflow-hidden slide-up"
-      style={{border:`1px solid ${r.ok?"var(--teal)55":"var(--red)55"}`,background:"var(--card)"}}>
-      <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-        <span className="text-sm font-bold" style={{color:r.ok?"var(--teal)":"var(--red)"}}>{r.ok?"✓ Applied":"✗ Failed"}</span>
-        <Pill label={`${(r.file_changes?.length||1)} file${(r.file_changes?.length||1)!==1?"s":""}`} color="blue"/>
-        <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>
-          {new Date(r.timestamp).toLocaleString()}
-        </span>
-      </div>
-      {changes.map((fc,i)=>(
-        <div key={i} className="px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-          <div className="flex flex-wrap items-center gap-2">
-            <span style={{color:fc.error?"var(--red)":"var(--teal)"}}>{fc.error?"✗":"✓"}</span>
-            <code className="font-mono text-[11px]" style={{color:"var(--txt-2)"}}>{fc.file}</code>
-            {fc.committed && <Pill label={(fc.commit_hash as string|null)?.slice(0,8)||"committed"} color="blue"/>}
-            {fc.reason && <span className="text-[10px] italic" style={{color:"var(--txt-3)"}}>{fc.reason}</span>}
-          </div>
-          {fc.error && <p className="mt-1 text-xs" style={{color:"var(--red)"}}>{fc.error}</p>}
-          {fc.new_code && !fc.error && (
-            <details className="mt-2">
-              <summary className="cursor-pointer text-[11px]" style={{color:"var(--txt-3)"}}>
-                Show code ({(fc.new_code as string).split("\n").length} lines)
-              </summary>
-              <pre className="mt-1.5 max-h-56 overflow-auto rounded-xl p-3 font-mono text-[10px]"
-                style={{background:"var(--void)",color:"#a8e8b8"}}>
-                {fc.new_code as string}
-              </pre>
-            </details>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function FullStackResultCard({r}:{r:FullStackImproveResult}){
-  return (
-    <div className="rounded-2xl overflow-hidden slide-up"
-      style={{border:`1px solid ${r.ok?"var(--violet)55":"var(--red)55"}`,background:"var(--card)"}}>
-      <div className="flex items-center gap-3 px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-        <span className="text-sm font-bold" style={{color:r.ok?"var(--violet)":"var(--red)"}}>{r.ok?"⚡ Full-stack applied":"✗ Failed"}</span>
-        <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>{new Date(r.timestamp).toLocaleString()}</span>
-      </div>
-      {([
-        {key:"backend" as const,label:"Backend",icon:"🐍"},
-        {key:"frontend_api" as const,label:"API client (agent-api.ts)",icon:"🔌"},
-        {key:"frontend_ui" as const,label:"UI (AgentTester.tsx)",icon:"🖥"},
-      ] as const).map(({key,label,icon})=>{
-        const sub=r[key]; if(!sub) return null;
-        return (
-          <div key={key} className="px-4 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-            <div className="flex flex-wrap items-center gap-2">
-              <span>{icon}</span>
-              <span className="text-xs font-semibold" style={{color:sub.ok?"var(--teal)":"var(--red)"}}>{sub.ok?"✓":"✗"} {label}</span>
-              <code className="font-mono text-[10px]" style={{color:"var(--txt-2)"}}>{sub.target_file}</code>
-              {sub.committed && <Pill label={sub.commit_hash?.slice(0,8)||"committed"} color="blue"/>}
-              {sub.ast_ok && <span className="text-[10px]" style={{color:"var(--txt-3)"}}>AST ✓</span>}
-            </div>
-            {sub.error && <p className="mt-1.5 text-xs" style={{color:"var(--red)"}}>{sub.error}</p>}
-            {sub.new_code && sub.ok && (
-              <details className="mt-2">
-                <summary className="cursor-pointer text-[11px]" style={{color:"var(--txt-3)"}}>
-                  Show diff ({sub.new_code.split("\n").length} lines)
-                </summary>
-                <pre className="mt-1.5 max-h-48 overflow-auto rounded-xl p-3 font-mono text-[10px]"
-                  style={{background:"var(--void)",color:"#a8e8b8"}}>
-                  {sub.new_code}
-                </pre>
-              </details>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── fallback research tab (no Convex) ────────────────────────────────────────
-function ResearchTabFallback({
-  heartbeat,memory,memoryLoading,topicsEdit,setTopicsEdit,
-  topicsSaving,researchRunning,baseUrl,
-  onRunResearch,onSaveTopics,onClearMemory,onRefresh,
-}:{
-  heartbeat:HeartbeatStatus|null;memory:string;memoryLoading:boolean;
-  topicsEdit:string;setTopicsEdit:(v:string)=>void;topicsSaving:boolean;
-  researchRunning:boolean;baseUrl:string;
-  onRunResearch:()=>Promise<void>;onSaveTopics:()=>Promise<void>;
-  onClearMemory:()=>Promise<void>;onRefresh:()=>Promise<void>;
-}){
-  return <ResearchTabInner {...{heartbeat,memory,memoryLoading,topicsEdit,setTopicsEdit,topicsSaving,researchRunning,baseUrl,onRunResearch,onSaveTopics,onClearMemory,onRefresh,isLive:false}}/>;
-}
-
-type ResearchTabInnerProps={
-  heartbeat:HeartbeatStatus|null;memory:string;memoryLoading:boolean;
-  topicsEdit:string;setTopicsEdit:(v:string)=>void;topicsSaving:boolean;
-  researchRunning:boolean;baseUrl:string;isLive:boolean;
-  onRunResearch:()=>Promise<void>;onSaveTopics:()=>Promise<void>;
-  onClearMemory:()=>Promise<void>;onRefresh:()=>Promise<void>;
-};
-
-export function ResearchTabInner({
-  heartbeat,memory,memoryLoading,topicsEdit,setTopicsEdit,
-  topicsSaving,researchRunning,isLive,
-  onRunResearch,onSaveTopics,onClearMemory,onRefresh,
-}:ResearchTabInnerProps){
-  const [newTopic,setNewTopic]=useState("");
-  const topics=useMemo(()=>topicsEdit.split("\n").map(t=>t.trim()).filter(Boolean),[topicsEdit]);
-
-  const addTopic=()=>{
-    const t=newTopic.trim();
-    if(!t) return;
-    setTopicsEdit([...topics,t].join("\n"));
-    setNewTopic("");
-  };
-  const removeTopic=(i:number)=>{
-    const next=topics.filter((_,j)=>j!==i);
-    setTopicsEdit(next.join("\n"));
-  };
-
-  // parse memory entries from markdown
-  const memEntries=useMemo(()=>{
-    if(!memory) return [];
-    return memory.split(/\n(?=## )/).map(block=>{
-      const titleMatch=/^## (.+)/.exec(block);
-      const dateMatch=/\*(.+?)\*/.exec(block);
-      const body=block.replace(/^## .+\n/,"").replace(/\*.+?\*\n?/,"").trim();
-      return {title:titleMatch?.[1]||"Research",date:dateMatch?.[1]||"",body};
-    }).filter(e=>e.title!=="Agent Memory");
-  },[memory]);
-
-  return (
-    <div className="flex flex-col gap-5">
-      {/* header card */}
-      <div className="rounded-2xl overflow-hidden"
-        style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-        <div className="flex items-center gap-3 px-5 py-4" style={{borderBottom:"1px solid var(--border-dim)"}}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl"
-            style={{background:"var(--blue)22",border:"1px solid var(--blue)44"}}>
-            <span className="text-lg">⬡</span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="font-bold" style={{color:"var(--txt)"}}>Proactive Research</h2>
-              {isLive && (
-                <span className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest blink"
-                  style={{background:"var(--teal)22",color:"var(--teal)",border:"1px solid var(--teal)44"}}>
-                  <span className="h-1.5 w-1.5 rounded-full" style={{background:"var(--teal)"}}/>LIVE
-                </span>
-              )}
-            </div>
-            <p className="text-[11px]" style={{color:"var(--txt-3)"}}>
-              {heartbeat
-                ? `${heartbeat.total_runs} runs completed · ${heartbeat.topic_count} topics · rotates every ${Math.round((heartbeat.interval_seconds||300)/60)}m`
-                : "Loading status…"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={()=>void onRefresh()}
-              className="rounded-xl px-3 py-1.5 text-xs font-medium transition hover:opacity-70"
-              style={{background:"var(--elevated)",color:"var(--txt-2)",border:"1px solid var(--border-dim)"}}>
-              ↺
-            </button>
-          </div>
-        </div>
-
-        {/* stats row */}
-        {heartbeat && (
-          <div className="grid grid-cols-3 gap-px" style={{background:"var(--border-dim)"}}>
-            {[
-              {label:"Total runs",value:heartbeat.total_runs.toString(),color:"var(--cyan)"},
-              {label:"Last run",value:fmtRelative(heartbeat.last_run),color:"var(--txt-2)"},
-              {label:"Up next",value:heartbeat.next_topic||"—",color:"var(--blue)"},
-            ].map(s=>(
-              <div key={s.label} className="px-4 py-3" style={{background:"var(--card)"}}>
-                <p className="text-[9px] font-semibold uppercase tracking-widest mb-0.5" style={{color:"var(--txt-3)"}}>{s.label}</p>
-                <p className="text-xs font-semibold truncate" style={{color:s.color}}>{s.value}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* action buttons */}
-        <div className="flex flex-wrap items-center gap-2 px-5 py-4">
-          <button type="button" disabled={researchRunning} onClick={()=>void onRunResearch()}
-            className="flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-bold transition-all hover:scale-[1.02] disabled:opacity-50"
-            style={{background:"linear-gradient(135deg,var(--blue),var(--cyan))",color:"#000"}}>
-            {researchRunning
-              ? <><span className="h-3 w-3 animate-spin rounded-full border-2 border-black border-t-transparent"/>Researching…</>
-              : <>▶ Run research now</>}
-          </button>
-          {memory && (
-            <button type="button" onClick={()=>void onClearMemory()}
-              className="ml-auto rounded-xl px-4 py-2 text-xs font-medium transition hover:opacity-80"
-              style={{background:"var(--red)18",color:"var(--red)",border:"1px solid var(--red)33"}}>
-              🗑 Clear memory
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* topic chips */}
-      <div className="rounded-2xl p-5"
-        style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-        <div className="mb-4 flex items-center gap-2">
-          <h3 className="font-bold text-sm" style={{color:"var(--txt)"}}>Research Topics</h3>
-          <span className="rounded-full px-2 py-0.5 text-[9px] font-bold"
-            style={{background:"var(--blue)22",color:"var(--blue)"}}>
-            {topics.length} / 20
-          </span>
-        </div>
-        <div className="mb-4 flex flex-wrap gap-2">
-          {topics.map((t,i)=>(
-            <span key={i} className="group flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium"
-              style={{background:"var(--elevated)",color:"var(--txt-2)",border:"1px solid var(--border)"}}>
-              <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{background:heartbeat?.next_topic===t?"var(--cyan)":"var(--blue)"}}/>
-              <span>{t}</span>
-              <button type="button" onClick={()=>removeTopic(i)}
-                className="opacity-0 group-hover:opacity-100 transition text-xs hover:text-red-400"
-                style={{color:"var(--txt-3)",marginLeft:"2px"}}>×</button>
-            </span>
-          ))}
-          {topics.length===0 && (
-            <p className="text-xs" style={{color:"var(--txt-3)"}}>No topics yet. Add some below.</p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <input
-            className="flex-1 rounded-xl px-3 py-2 text-sm outline-none"
-            style={{background:"var(--elevated)",color:"var(--txt)",border:"1px solid var(--border-dim)"}}
-            value={newTopic} onChange={e=>setNewTopic(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addTopic();}}}
-            placeholder="Add a topic and press Enter…"/>
-          <button type="button" onClick={addTopic} disabled={!newTopic.trim()}
-            className="rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40"
-            style={{background:"var(--blue)22",color:"var(--blue)",border:"1px solid var(--blue)44"}}>
-            + Add
-          </button>
-        </div>
-        {topics.length>0 && (
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-[10px]" style={{color:"var(--txt-3)"}}>
-              Changes take effect after saving → synced to Convex
-            </p>
-            <button type="button" disabled={topicsSaving} onClick={()=>void onSaveTopics()}
-              className="rounded-xl px-5 py-2 text-xs font-bold transition-all hover:scale-[1.02] disabled:opacity-40"
-              style={{background:"linear-gradient(135deg,var(--teal),var(--blue))",color:"#000"}}>
-              {topicsSaving?"Saving…":"Save topics"}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* memory entries */}
-      <div className="rounded-2xl overflow-hidden"
-        style={{background:"var(--surface)",border:"1px solid var(--border-dim)"}}>
-        <div className="flex items-center gap-2 px-5 py-3" style={{borderBottom:"1px solid var(--border-dim)"}}>
-          <span style={{color:"var(--txt)"}}>📝</span>
-          <p className="font-bold text-sm" style={{color:"var(--txt)"}}>Research Memory</p>
-          {memory && (
-            <span className="ml-auto text-[10px]" style={{color:"var(--txt-3)"}}>
-              {(memory.length/1024).toFixed(1)} KB · {memEntries.length} entries
-            </span>
-          )}
-        </div>
-        {memoryLoading ? (
-          <div className="flex flex-col gap-3 p-5">
-            {[1,2,3].map(i=>(
-              <div key={i} className="skeleton h-16 rounded-xl"/>
-            ))}
-          </div>
-        ) : memEntries.length>0 ? (
-          <div className="flex flex-col gap-0">
-            {memEntries.map((e,i)=>(
-              <MemoryEntryCard key={i} entry={e} index={i}/>
-            ))}
-          </div>
-        ) : (
-          <div className="px-5 py-10 text-center">
-            <p className="text-2xl mb-2">⬡</p>
-            <p className="text-sm" style={{color:"var(--txt-3)"}}>No research yet — click "Run research now"</p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MemoryEntryCard({entry,index}:{entry:{title:string;date:string;body:string};index:number}){
-  const [expanded,setExpanded]=useState(index===0);
-  return (
-    <div style={{borderBottom:"1px solid var(--border-dim)"}}>
-      <button type="button" onClick={()=>setExpanded(e=>!e)}
-        className="w-full flex items-center gap-3 px-5 py-3 text-left transition hover:opacity-80">
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
-          style={{background:"var(--blue)22",color:"var(--blue)"}}>{index+1}</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold truncate" style={{color:"var(--txt)"}}>{entry.title}</p>
-          {entry.date && <p className="text-[10px]" style={{color:"var(--txt-3)"}}>{entry.date}</p>}
-        </div>
-        <span className="text-xs" style={{color:"var(--txt-3)"}}>{expanded?"▲":"▼"}</span>
-      </button>
-      {expanded && (
-        <div className="px-5 pb-4 fade-in">
-          <p className="text-xs leading-relaxed whitespace-pre-wrap" style={{color:"var(--txt-2)"}}>{entry.body}</p>
-        </div>
-      )}
     </div>
   );
 }

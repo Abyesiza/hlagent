@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -10,7 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from super_agent.app.api.deps import build_container
 from super_agent.app.core.config import get_settings
 from super_agent.app.api.routes import router
-from super_agent.app.services.email_notify import email_ready
 from super_agent.app.services.heartbeat import attach_heartbeat
 
 logging.basicConfig(level=logging.INFO)
@@ -21,44 +21,56 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     container = build_container()
     app.state.container = container
+    settings = container.settings
 
     # Seed Convex from existing disk data on first start
     if container.convex_store is not None:
         try:
-            container.convex_store.ensure_seeded_from_disk(container.settings.data_dir)
+            container.convex_store.ensure_seeded_from_disk(settings.data_dir)
             logger.info("Convex seed check complete")
         except Exception as exc:
             logger.warning("Convex seed failed (non-fatal): %s", exc)
 
-    # Log email configuration status at startup
-    settings = container.settings
-    if settings.smtp_user and settings.smtp_password:
-        logger.info(
-            "Email notifications: READY  user=%s  notify_to=%s",
-            settings.smtp_user,
-            settings.notification_email or settings.smtp_user,
-        )
-    else:
-        logger.warning(
-            "Email notifications: NOT configured — set Email + EmailPassword in .env"
-        )
+    logger.info(
+        "HDC model loaded: vocab=%d tokens=%d dim=%d",
+        container.lm.stats.vocab_size,
+        container.lm.stats.training_tokens,
+        container.lm.dim,
+    )
 
+    # Optional: seed model on first startup
+    if settings.seed_on_startup and container.lm.stats.training_tokens == 0:
+        logger.info("Seed-on-startup enabled — bootstrapping model in background")
+        asyncio.create_task(container.pipeline.run_seed_topics())
+
+    # Start heartbeat scheduler
     scheduler = AsyncIOScheduler()
     attach_heartbeat(
         scheduler,
-        container.settings,
-        container.gemini,
+        settings,
+        container.lm,
         convex_store=container.convex_store,
-        orchestrator=container.orchestrator,
+        pipeline=container.pipeline,
     )
     scheduler.start()
-    logger.info("Super Agent API started (heartbeat scheduler on)")
+    logger.info("HDC Super-Agent started (continuous learning heartbeat on)")
     yield
     scheduler.shutdown(wait=False)
-    logger.info("Super Agent API shutdown")
+    # Save model state on shutdown
+    try:
+        container.lm.save(settings.data_dir / "hdc_model.json")
+        logger.info("HDC model saved on shutdown")
+    except Exception as exc:
+        logger.warning("Model save on shutdown failed: %s", exc)
+    logger.info("HDC Super-Agent shutdown")
 
 
-app = FastAPI(title="Super Agent", lifespan=lifespan)
+app = FastAPI(
+    title="HDC Super-Agent",
+    description="Hyperdimensional Computing language model with continuous web-based learning.",
+    version="2.0.0",
+    lifespan=lifespan,
+)
 
 _settings = get_settings()
 _cors_list = [o.strip() for o in _settings.cors_origins.split(",") if o.strip()]
@@ -77,11 +89,11 @@ app.include_router(router)
 @app.get("/health")
 def health() -> dict[str, object]:
     s = get_settings()
-    keys = s.all_api_keys()
     return {
         "status": "ok",
-        "gemini_configured": len(keys) > 0,
-        "gemini_key_count": len(keys),
+        "model": "HDC-LM",
         "convex_configured": bool(s.convex_url),
-        "email_notifications_ready": email_ready(s),
+        "hdc_dim": s.hdc_dim,
+        "hdc_context_size": s.hdc_context_size,
+        "research_interval_seconds": s.research_interval_seconds,
     }

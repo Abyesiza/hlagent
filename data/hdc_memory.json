@@ -539,6 +539,210 @@
       "solution_repr": "Today's date is Wednesday, March 25, 2026.\n\nI can certainly provide you with weather information! However, to do so accurately, I need you to specify **which region** you are interested in. \"Region\" is too broad for a precise weather forecast.\n\nPlease tell me:\n\n*   **The specific city and country** (e.g., \"London, UK\", \"New York City, USA\", \"Tehran, Iran\")\n*   **Or a specific geographical area** (e.g., \"The Alps\", \"Sahara Desert\")\n\nOnce you specify the location, I can perform a live search to gi",
       "route": "neural",
       "retrieval_count": 0
+    },
+    {
+      "task_fp": "hello world",
+      "solution_repr": "I don't have enough context to answer yet.",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "hello world",
+      "solution_repr": "the the the",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is hyperdimensional computing",
+      "solution_repr": "I don't have enough context to answer yet.",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is machine learning",
+      "solution_repr": "or browser dog 7 2021 apr 2011 purchasing that's power out bai yours participate retrieve mental than more state sequence unexpected email gradient email opportunity plans your four internet dissimila",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is machine learning",
+      "solution_repr": "paused datasets learned attire 58 laws nurses adapted murder nemira last 265 104 singh desh unit equipment study cater analyzing nello incidents nominated suggestions indicates serpentine costs publis",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is machine learning",
+      "solution_repr": "paused datasets learned conflicting behar athena exploration fag escaping operating wrong circuits facebook passage stand photographers essential precision champion enigmatic weak types won ubt deduct",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is machine learning",
+      "solution_repr": "paused civilization computer spinoff interests spelling flies saturnian stewardess explorer orion where formal seriously reddy thackeray float 650 ram modify preparation kunzel gotit guarantee organiz",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "explain neural networks",
+      "solution_repr": "scheme trained pool 40 103 reduction remove fund volume passed fulfilled heat ecosystem jaynagar formally scheduled let 251 characterises randomly music declared spent description 59 universe's cadre ",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "hey tell me about hdc",
+      "solution_repr": "I recognise: today's, date, is, march, based, on, your, it, appears, you're, asking, about, paths, forward, or, solutions, for, and, the, current, overall, condition, no, i, want, to, know, about, the",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "what is machine learning",
+      "solution_repr": "I recognise: what, is, machine, learning.\nRelated in my memory: operated, infrastructure, surprise, illness, npcs, blocked.\n[11,431 words \u00b7 131,633 tokens trained. Research more topics to improve gene",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about neural networks",
+      "solution_repr": "I recognise: tell, me, about, neural, networks, tell, me, about, neural, networks.\nRelated in my memory: difficult, neuron, minai36, videophone, poor, breaks.\n[11,452 words \u00b7 131,932 tokens trained. R",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "hdc what is it",
+      "solution_repr": "I recognise: today's, date, is, march, my, for, the, you, are, asking, about, active, military, or, involving, i, will, focus, my, live, search, specifically, i, need, you, to, check, and, always, tel",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about yourself",
+      "solution_repr": "I recognise: today's, date, is, march, i, can, certainly, provide, you, with, weather, to, do, so, i, need, you, to, specify, you, are, interested, i, user:, hey, tell, me, about, hdc, i, the, user:, ",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "hey",
+      "solution_repr": "I recognise: today's, date, is, march, based, on, your, it, appears, you're, asking, about, paths, forward, or, solutions, for, and, the, current, overall, condition, user:, no, i, want, to, know, abo",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "I recognise: today's, date, is, march, my, for, the, you, are, asking, about, active, military, or, involving, i, will, focus, my, live, search, specifically, user:, i, need, you, to, check, and, alwa",
+      "route": "generation",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "I have some knowledge of **hdc** (12,587 words learned so far).\nConcepts I connect to that: responsible, vibrant, generating, sorting, decision.\nMy generation quality will improve as I train. Currentl",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "hey",
+      "solution_repr": "I'm still building my vocabulary. Keep the heartbeat running and I'll improve.",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "I have some knowledge of **hdc** (12,587 words learned so far).\nConcepts I connect to that: responsible, vibrant, generating, sorting, decision.\nMy generation quality will improve as I train. Currentl",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWords I ",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWords I ",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWords I ",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWords I ",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me what you are",
+      "solution_repr": "I'm still building my vocabulary. Keep the heartbeat running and I'll get smarter.",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), sorting (0.03), decision (0.03), pooling (0.03)\n\nWhat I e",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about communication",
+      "solution_repr": "Here's what I currently know about **communication**:\n\n**communication** \u2014 related concepts in my memory:\n  camel (0.04), explainable (0.04), posted (0.04), interjection (0.04), meet (0.03), 2022 (0.0",
+      "route": "learning",
+      "retrieval_count": 0
+    },
+    {
+      "task_fp": "tell me about hdc",
+      "solution_repr": "Here's what I currently know about **hdc**:\n\n**hdc** \u2014 related concepts in my memory:\n  responsible (0.04), vibrant (0.04), generating (0.04), chores (0.04), sorting (0.03), decision (0.03)\n\nWhat I ex",
+      "route": "learning",
+      "retrieval_count": 0
     }
   ]
 }

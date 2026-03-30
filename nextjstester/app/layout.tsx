@@ -18,8 +18,8 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Super Agent",
-  description: "Neuro-symbolic · self-evolving · agentic AI",
+  title: "HDC Brain",
+  description: "Hyperdimensional Computing · continuous learning · neuro-symbolic AI",
 };
 
 export default function RootLayout({
