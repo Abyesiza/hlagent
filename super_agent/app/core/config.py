@@ -73,7 +73,11 @@ class Settings(BaseSettings):
         raw = os.environ.get("SUPER_AGENT_DATA_DIR", "").strip()
         base = Path(raw) if raw else Path("/tmp/hlagent-data")
         base.mkdir(parents=True, exist_ok=True)
-        return self.model_copy(update={"data_dir": base.resolve()})
+        # Use object.__setattr__ so Pydantic v2 doesn't reject the in-place
+        # mutation (returning model_copy() from a mode="after" validator is
+        # silently ignored when called via __init__).
+        object.__setattr__(self, "data_dir", base.resolve())
+        return self
 
 
 @lru_cache

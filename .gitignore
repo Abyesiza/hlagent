@@ -13,3 +13,12 @@ sandbox/workspace/
 venv/
 
 .env.local
+
+# Runtime-generated model & state files — never commit these.
+# Vercel's filesystem is ephemeral; persistence is handled via Convex.
+data/hdc_model.json
+data/hdc_model.meta.json
+data/hdc_memory.json
+data/trained_hashes.json
+data/heartbeat_cursor.json
+data/sessions/
