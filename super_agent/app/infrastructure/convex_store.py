@@ -121,3 +121,37 @@ class ConvexAgentStore:
                 "lastRunIso": last_run_iso,
             },
         )
+
+    # ── HDC model weights ─────────────────────────────────────────────────────
+
+    def save_model_weights(
+        self,
+        dim: int,
+        context_size: int,
+        assoc_count: int,
+        assoc_memory_b64: str,
+        vocab_labels: str,
+        training_tokens: int,
+        training_docs: int,
+        last_trained: str | None,
+        created_at: str,
+    ) -> None:
+        """Persist HDC model weights to Convex (survives Vercel cold starts)."""
+        args: dict[str, Any] = {
+            "dim": dim,
+            "contextSize": context_size,
+            "assocCount": assoc_count,
+            "assocMemoryB64": assoc_memory_b64,
+            "vocabLabels": vocab_labels,
+            "trainingTokens": training_tokens,
+            "trainingDocs": training_docs,
+            "createdAt": created_at,
+        }
+        if last_trained:
+            args["lastTrained"] = last_trained
+        self._client.mutation("hdcModel:saveWeights", args)
+
+    def load_model_weights(self) -> dict[str, Any] | None:
+        """Retrieve the persisted HDC model weights from Convex."""
+        result = self._client.query("hdcModel:loadWeights", {})
+        return dict(result) if isinstance(result, dict) else None

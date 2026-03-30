@@ -56,12 +56,20 @@ async def lifespan(app: FastAPI):
     logger.info("HDC Super-Agent started (continuous learning heartbeat on)")
     yield
     scheduler.shutdown(wait=False)
-    # Save model state on shutdown
+    # Save model to disk
     try:
         container.lm.save(settings.data_dir / "hdc_model.json")
-        logger.info("HDC model saved on shutdown")
+        logger.info("HDC model saved to disk on shutdown")
     except Exception as exc:
-        logger.warning("Model save on shutdown failed: %s", exc)
+        logger.warning("Disk model save on shutdown failed: %s", exc)
+    # Save model to Convex (ensures Vercel cold starts resume from latest state)
+    if container.convex_store is not None:
+        try:
+            payload = container.lm.to_convex_payload()
+            container.convex_store.save_model_weights(**payload)
+            logger.info("HDC model saved to Convex on shutdown")
+        except Exception as exc:
+            logger.warning("Convex model save on shutdown failed: %s", exc)
     logger.info("HDC Super-Agent shutdown")
 
 

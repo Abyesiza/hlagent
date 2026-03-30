@@ -366,6 +366,88 @@ class HDCLanguageModel:
         )
         return answer
 
+    # ── Convex persistence (Vercel-safe) ─────────────────────────────────────
+
+    def to_convex_payload(self) -> dict:
+        """
+        Serialize the trained model state to a flat dict for Convex storage.
+
+        Encoding strategy (avoids Convex's 8192-element array limit):
+        - assocMemoryB64 : the ±1 bipolar weight vector packed as int8 bytes
+                           then base64-encoded → ~13 KB for dim=10 000
+        - vocabLabels    : newline-delimited word list; item-memory hypervectors
+                           are deterministic and will be regenerated on load
+        """
+        import base64
+
+        with self._lock:
+            if self.space._assoc_memory is not None:
+                arr_int8 = self.space._assoc_memory.astype(np.int8)
+                assoc_b64 = base64.b64encode(arr_int8.tobytes()).decode("ascii")
+            else:
+                assoc_b64 = ""
+            vocab_str = "\n".join(self.space.item_memory.labels())
+            assoc_count = self.space._assoc_count
+            training_tokens = self.stats.training_tokens
+            training_docs = self.stats.training_docs
+            last_trained = self.stats.last_trained or None
+            created_at = self.stats.created_at
+
+        return {
+            "dim": self.dim,
+            "context_size": self.context_size,
+            "assoc_count": assoc_count,
+            "assoc_memory_b64": assoc_b64,
+            "vocab_labels": vocab_str,
+            "training_tokens": training_tokens,
+            "training_docs": training_docs,
+            "last_trained": last_trained,
+            "created_at": created_at,
+        }
+
+    @classmethod
+    def from_convex_payload(cls, data: dict) -> "HDCLanguageModel":
+        """
+        Reconstruct a model from a Convex payload (result of load_model_weights).
+
+        Item-memory hypervectors are regenerated deterministically from the
+        stored vocabulary labels — no need to persist the full matrix.
+        """
+        import base64
+
+        dim = int(data.get("dim", DEFAULT_DIM))
+        context_size = int(data.get("contextSize", data.get("context_size", 5)))
+        obj = cls(dim=dim, context_size=context_size)
+
+        obj.space._assoc_count = int(data.get("assocCount", data.get("assoc_count", 0)))
+
+        assoc_b64 = data.get("assocMemoryB64", data.get("assoc_memory_b64", ""))
+        if assoc_b64:
+            arr_bytes = base64.b64decode(assoc_b64)
+            obj.space._assoc_memory = (
+                np.frombuffer(arr_bytes, dtype=np.int8).astype(np.float32)
+            )
+
+        vocab_str = data.get("vocabLabels", data.get("vocab_labels", ""))
+        if vocab_str:
+            for label in vocab_str.split("\n"):
+                label = label.strip()
+                if label:
+                    obj.space.symbol(label)   # deterministic rebuild of item memory
+
+        obj.stats = HDCLMStats(
+            vocab_size=len(obj.space.item_memory),
+            training_tokens=int(data.get("trainingTokens", data.get("training_tokens", 0))),
+            training_docs=int(data.get("trainingDocs", data.get("training_docs", 0))),
+            last_trained=data.get("lastTrained", data.get("last_trained", "")),
+            created_at=data.get("createdAt", data.get("created_at", "")),
+        )
+        logger.info(
+            "HDCLanguageModel restored from Convex: vocab=%d tokens=%d",
+            len(obj.space.item_memory), obj.stats.training_tokens,
+        )
+        return obj
+
     # ── persistence ──────────────────────────────────────────────────────────
 
     def save(self, path: Path) -> None:
@@ -392,10 +474,12 @@ class HDCLanguageModel:
         context_size = 5
         stats_dict: dict = {}
         if meta_path.is_file():
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            dim = int(meta.get("dim", dim))
-            context_size = int(meta.get("context_size", context_size))
-            stats_dict = meta.get("stats", {})
+            meta_text = meta_path.read_text(encoding="utf-8").strip()
+            if meta_text:
+                meta = json.loads(meta_text)
+                dim = int(meta.get("dim", dim))
+                context_size = int(meta.get("context_size", context_size))
+                stats_dict = meta.get("stats", {})
 
         obj = cls(dim=dim, context_size=context_size)
         if path.is_file():
@@ -411,7 +495,13 @@ class HDCLanguageModel:
     @classmethod
     def load_or_new(cls, path: Path, **kwargs) -> "HDCLanguageModel":
         if path.is_file():
-            return cls.load(path)
+            try:
+                return cls.load(path)
+            except (ValueError, KeyError, json.JSONDecodeError, Exception) as exc:
+                logger.warning(
+                    "Failed to load HDC model from %s (%s) — starting fresh.",
+                    path, exc,
+                )
         return cls(**kwargs)
 
     # ── repr ─────────────────────────────────────────────────────────────────

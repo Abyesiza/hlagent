@@ -143,3 +143,50 @@ export const listTrainingRuns = query({
       .take(args.limit ?? 20);
   },
 });
+
+// ── Model Weights (Vercel-safe persistence) ───────────────────────────────
+// The assoc memory and vocabulary are stored as compact strings to stay
+// well under Convex's 8192-element array limit:
+//   assocMemoryB64 — base64 of int8-packed ±1 bipolar floats
+//   vocabLabels    — newline-delimited word list (hypervectors regenerated deterministically)
+
+export const saveWeights = mutation({
+  args: {
+    dim: v.number(),
+    contextSize: v.number(),
+    assocCount: v.number(),
+    assocMemoryB64: v.string(),
+    vocabLabels: v.string(),
+    trainingTokens: v.number(),
+    trainingDocs: v.number(),
+    lastTrained: v.optional(v.string()),
+    createdAt: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("hdcModelWeights")
+      .withIndex("by_key", (q) => q.eq("key", "global"))
+      .unique();
+    const now = Date.now();
+    if (existing) {
+      await ctx.db.patch(existing._id, { ...args, updatedAt: now });
+    } else {
+      await ctx.db.insert("hdcModelWeights", {
+        key: "global",
+        ...args,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
+export const loadWeights = query({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query("hdcModelWeights")
+      .withIndex("by_key", (q) => q.eq("key", "global"))
+      .unique();
+    return row ?? null;
+  },
+});

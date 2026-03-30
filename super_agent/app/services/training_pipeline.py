@@ -235,11 +235,24 @@ class TrainingPipeline:
     # ── checkpoint ───────────────────────────────────────────────────────────
 
     def _checkpoint(self) -> None:
+        # Always try disk first (fast, zero-cost)
         model_path = self.data_dir / "hdc_model.json"
         try:
             self.lm.save(model_path)
         except Exception as exc:
-            logger.warning("Checkpoint save failed: %s", exc)
+            logger.warning("Disk checkpoint save failed: %s", exc)
+
+        # Persist to Convex so the model survives Vercel cold starts
+        if self.convex_store is not None:
+            try:
+                payload = self.lm.to_convex_payload()
+                self.convex_store.save_model_weights(**payload)
+                logger.info(
+                    "Model checkpoint saved to Convex (vocab=%d tokens=%d)",
+                    self.lm.stats.vocab_size, self.lm.stats.training_tokens,
+                )
+            except Exception as exc:
+                logger.warning("Convex checkpoint save failed: %s", exc)
 
     # ── diagnostics ──────────────────────────────────────────────────────────
 

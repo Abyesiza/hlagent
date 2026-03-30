@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as hdcModel from "../hdcModel.js";
 import type * as memory from "../memory.js";
 import type * as researchConfig from "../researchConfig.js";
 import type * as tasks from "../tasks.js";
@@ -19,6 +20,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  hdcModel: typeof hdcModel;
   memory: typeof memory;
   researchConfig: typeof researchConfig;
   tasks: typeof tasks;

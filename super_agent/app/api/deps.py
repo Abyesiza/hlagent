@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from super_agent.app.core.config import Settings, get_settings
@@ -9,6 +10,8 @@ from super_agent.app.infrastructure.hdc_memory_store import HDCMemoryStore
 from super_agent.app.services.orchestrator import SuperAgentOrchestrator
 from super_agent.app.services.session_store import SessionStore
 from super_agent.app.services.training_pipeline import TrainingPipeline
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,22 +32,38 @@ class AppContainer:
 def build_container() -> AppContainer:
     settings = get_settings()
 
-    # Load or create the HDC Language Model
-    model_path = settings.data_dir / "hdc_model.json"
-    lm = HDCLanguageModel.load_or_new(
-        model_path,
-        dim=settings.hdc_dim,
-        context_size=settings.hdc_context_size,
-    )
-
-    hdc = HDCMemoryStore(settings.data_dir / "hdc_memory.json")
-    sessions = SessionStore(settings.data_dir / "sessions")
-
+    # Build Convex store first — needed to load the model from Convex
     convex_store = (
         ConvexAgentStore(settings.convex_url)
         if settings.convex_url
         else None
     )
+
+    # Load model: Convex (persistent across Vercel cold starts) → disk → fresh
+    lm: HDCLanguageModel | None = None
+
+    if convex_store is not None:
+        try:
+            payload = convex_store.load_model_weights()
+            if payload:
+                lm = HDCLanguageModel.from_convex_payload(payload)
+                logger.info(
+                    "HDC model loaded from Convex: vocab=%d tokens=%d",
+                    lm.stats.vocab_size, lm.stats.training_tokens,
+                )
+        except Exception as exc:
+            logger.warning("Failed to load model from Convex (%s) — trying disk.", exc)
+
+    if lm is None:
+        model_path = settings.data_dir / "hdc_model.json"
+        lm = HDCLanguageModel.load_or_new(
+            model_path,
+            dim=settings.hdc_dim,
+            context_size=settings.hdc_context_size,
+        )
+
+    hdc = HDCMemoryStore(settings.data_dir / "hdc_memory.json")
+    sessions = SessionStore(settings.data_dir / "sessions")
 
     orchestrator = SuperAgentOrchestrator(
         settings, lm, hdc, sessions, convex_store=convex_store

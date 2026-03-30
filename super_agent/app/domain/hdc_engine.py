@@ -385,7 +385,10 @@ class HDCSpace:
 
     @classmethod
     def load(cls, path: Path) -> "HDCSpace":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise ValueError(f"HDCSpace model file is empty: {path}")
+        raw = json.loads(text)
         dim = int(raw.get("dim", DEFAULT_DIM))
         obj = cls(dim=dim)
         obj._assoc_count = int(raw.get("assoc_count", 0))

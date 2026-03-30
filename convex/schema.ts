@@ -60,6 +60,24 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
+  // ── HDC model weights (single row, key === "global") ────────────────────
+  // Stored as compact strings to avoid the 8192-element array limit:
+  //   assocMemoryB64 — base64 of int8-packed ±1 bipolar floats (dim bytes)
+  //   vocabLabels    — newline-delimited word list (for deterministic rebuild)
+  hdcModelWeights: defineTable({
+    key: v.string(),
+    dim: v.number(),
+    contextSize: v.number(),
+    assocCount: v.number(),
+    assocMemoryB64: v.string(),
+    vocabLabels: v.string(),
+    trainingTokens: v.number(),
+    trainingDocs: v.number(),
+    lastTrained: v.optional(v.string()),
+    createdAt: v.string(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   // ── training run log (each research+train cycle) ─────────────────────────
   trainingRuns: defineTable({
     topic: v.string(),
